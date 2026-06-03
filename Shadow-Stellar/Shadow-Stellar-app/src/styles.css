@@ -1,0 +1,206 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Vault — Machined Titanium design system */
+
+@theme inline {
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 6px;
+  --radius-2xl: 8px;
+  --radius-3xl: 12px;
+  --radius-4xl: 16px;
+
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+
+  /* Vault-specific semantic tokens */
+  --color-surface-deep: var(--surface-deep);
+  --color-surface-base: var(--surface-base);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-edge: var(--edge);
+  --color-edge-strong: var(--edge-strong);
+  --color-amber-core: var(--amber-core);
+  --color-amber-glow: var(--amber-glow);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --shadow-vault: 0 30px 80px -20px oklch(0 0 0 / 0.8);
+  --shadow-inset-deep: inset 0 2px 10px oklch(0 0 0 / 0.6);
+  --shadow-amber-glow: 0 0 24px oklch(0.78 0.18 75 / 0.35);
+
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-tick: tick 1s steps(1) infinite;
+  --animate-shimmer: shimmer 2.5s linear infinite;
+  --animate-fade-up: fade-up 0.5s ease-out;
+
+  @keyframes tick {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+:root {
+  /* Force dark — this app is dark only */
+  --radius: 0.25rem;
+
+  --background: oklch(0.13 0.005 280);
+  --foreground: oklch(0.96 0.005 280);
+
+  --surface-deep: oklch(0.10 0.005 280);
+  --surface-base: oklch(0.14 0.005 280);
+  --surface-raised: oklch(0.18 0.006 280);
+  --surface-sunken: oklch(0.08 0.005 280);
+
+  --edge: oklch(0.25 0.006 280);
+  --edge-strong: oklch(0.35 0.008 280);
+
+  --amber-core: oklch(0.82 0.16 78);
+  --amber-glow: oklch(0.74 0.18 65);
+
+  --success: oklch(0.72 0.16 155);
+  --warning: oklch(0.82 0.16 78);
+  --danger: oklch(0.65 0.22 22);
+
+  --card: var(--surface-base);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--foreground);
+
+  --primary: var(--amber-core);
+  --primary-foreground: oklch(0.13 0.005 280);
+
+  --secondary: var(--surface-raised);
+  --secondary-foreground: var(--foreground);
+
+  --muted: var(--surface-raised);
+  --muted-foreground: oklch(0.62 0.01 280);
+
+  --accent: var(--surface-raised);
+  --accent-foreground: var(--foreground);
+
+  --destructive: var(--danger);
+  --destructive-foreground: oklch(0.98 0.005 280);
+
+  --border: var(--edge);
+  --input: var(--edge);
+  --ring: var(--amber-core);
+
+  --chart-1: var(--amber-core);
+  --chart-2: var(--success);
+  --chart-3: var(--danger);
+  --chart-4: oklch(0.6 0.12 220);
+  --chart-5: oklch(0.7 0.14 320);
+
+  --sidebar: var(--surface-base);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--amber-core);
+  --sidebar-primary-foreground: oklch(0.13 0.005 280);
+  --sidebar-accent: var(--surface-raised);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--edge);
+  --sidebar-ring: var(--amber-core);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    background-image: radial-gradient(
+      ellipse 80% 50% at 50% -10%,
+      oklch(0.18 0.01 280) 0%,
+      transparent 70%
+    );
+    background-attachment: fixed;
+  }
+
+  /* Tabular numerals everywhere money/time appears */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Machined groove progress bar texture */
+.groove-ticks {
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 4%,
+    oklch(0 0 0 / 0.55) 4%,
+    oklch(0 0 0 / 0.55) 4.5%
+  );
+}
+
+/* Subtle top edge highlight on cards */
+.edge-highlight::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    oklch(0.55 0.01 280 / 0.6),
+    transparent
+  );
+  pointer-events: none;
+}

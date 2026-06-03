@@ -1,0 +1,290 @@
+# Implementation Plan: Collective Commitment Protocol
+
+## Overview
+
+Implement a standalone Soroban smart contract (`collective-commitment-protocol/`) following the same crate structure and patterns as `time-locked-vault`. Tasks proceed from project scaffolding through data types, storage helpers, token layer, all 12 contract functions, event emission, error handling, unit tests, and property-based tests — each step wired into the previous before moving on.
+
+## Tasks
+
+- [x] 1. Scaffold the Soroban contract crate
+  - Create `collective-commitment-protocol/` at the workspace root with the same layout as `time-locked-vault/`
+  - Write `Cargo.toml` with `soroban-sdk = "22.0.0"` (default-features off), `proptest = "1"` (dev), and `soroban-sdk` with `testutils` feature (dev)
+  - Create `src/lib.rs` with `#![no_std]`, module declarations, and an empty `#[contract] pub struct CcpContract`
+  - Confirm `cargo build --target wasm32-unknown-unknown --release` produces a valid WASM artifact
+  - _Requirements: 12 (prerequisite for all)_
+
+- [x] 2. Define data types, error enum, and DataKey
+  - [x] 2.1 Implement enums and structs in `src/types.rs`
+    - Define `VaultState`, `MemberState`, `LockType` with `#[contracttype]`, `Clone`, `PartialEq`, `Debug`
+    - Define `GroupVault` struct (vault_id, creator, token, members, obligations, unlock_time, funding_deadline, lock_type, penalty_rate, state, total_size, deposited_count, claimed_count)
+    - Define `MemberRecord` struct (state, amount)
+    - Define all 8 event structs: `GroupVaultCreatedEvent`, `MemberDepositedEvent`, `VaultActivatedEvent`, `VaultCancelledEvent`, `MemberEarlyExitEvent`, `MemberWithdrawnEvent`, `PoolClaimedEvent`, `VaultResolvedEvent`
+    - _Requirements: 1.1, 1.12, 1.13, 2.1, 5.1, 6.2, 13.1–13.8_
+  - [x] 2.2 Implement `DataKey` enum and `CcpError` contracterror in `src/storage_types.rs`
+    - `DataKey` variants: `VaultCounter`, `SupportedTokens`, `CommunityPool(u64)`, `GroupVault(u64)`, `MemberRecord(u64, Address)`, `CreatorVaults(Address)`, `MemberVaults(Address)`
+    - `CcpError` variants with numeric codes as specified in the design (1–40)
+    - _Requirements: 1.2–1.11, 2.2–2.5, 3.3–3.4, 4.2–4.3, 5.3, 6.4–6.5, 7.3, 8.3–8.6, 10.1, 12.2_
+
+- [x] 3. Implement storage helpers and pure utility functions
+  - [x] 3.1 Write all storage helpers in `src/storage.rs`
+    - `next_vault_id`, `is_supported_token`
+    - `get_group_vault_unchecked`, `save_group_vault` (persistent + TTL extend to 535_000)
+    - `get_member_record`, `save_member_record` (persistent + TTL extend)
+    - `get_pool`, `add_to_pool`, `set_pool` (instance storage)
+    - `get_creator_vaults`, `save_creator_vaults`, `get_member_vaults`, `save_member_vaults` (persistent + TTL extend)
+    - Use `LEDGER_BUMP_AMOUNT = 535_000` constant for all persistent TTL extensions
+    - _Requirements: 1.15, 1.16, 9.1–9.5, 11.1–11.8_
+  - [x] 3.2 Implement pure utility functions in `src/utils.rs`
+    - `calculate_penalty(amount: i128, penalty_rate: u32) -> (i128, i128)`: penalty = floor(amount * rate / 10_000), payout = amount - penalty
+    - `token_client<'a>(env: &'a Env, token: &Address) -> token::Client<'a>`
+    - `count_active_members(env: &Env, vault_id: u64, vault: &GroupVault) -> u32`: iterate vault.members, count those with MemberState::Active
+    - `maybe_transition_to_settlement_ready(env: &Env, vault_id: u64, vault: &mut GroupVault)`: if ActiveLocked and timestamp >= unlock_time, set state to SettlementReady and save
+    - _Requirements: 4.5, 5.1, 5.2, 6.2, 9.2_
+  - [ ]* 3.3 Write unit tests for pure utility functions
+    - `calculate_penalty` with known (amount, rate) pairs including boundary values (rate=1, rate=10000, amount=1)
+    - Verify payout + penalty == amount for all cases
+    - _Requirements: 5.2, 9.2_
+
+- [x] 4. Implement `initialize`
+  - Store xlm, usdc, eurc addresses as `SupportedTokens` vec; set `VaultCounter` to 0
+  - Guard against double-init: return `AlreadyInitialized` if `SupportedTokens` already set
+  - _Requirements: 12.1, 12.2, 12.3, 12.4_
+
+- [x] 5. Implement `create_group_vault`
+  - [x] 5.1 Write input validation
+    - `creator.require_auth()`
+    - Validate member count in [5, 100] → `InvalidMemberCount`
+    - Validate amounts.len() == members.len() → `MemberAmountMismatch`
+    - Validate all amounts > 0 → `InvalidObligationAmount`
+    - Validate token is supported → `UnsupportedToken`
+    - Validate unlock_time > ledger timestamp → `InvalidUnlockTime`
+    - Validate funding_deadline > ledger timestamp and funding_deadline < unlock_time → `InvalidFundingDeadline`
+    - Validate penalty_rate in [1, 10000] for Penalty lock, 0 for Strict → `InvalidPenaltyRate`
+    - _Requirements: 1.2–1.11_
+  - [x] 5.2 Write vault creation and index update logic
+    - Build `obligations: Map<Address, i128>` from parallel members/amounts vecs; compute total_size
+    - Allocate vault_id via `next_vault_id`; build `GroupVault` with state `FundingOpen`, deposited_count=0, claimed_count=0
+    - Save vault; create a `MemberRecord { state: Committed, amount }` for each member and save
+    - Append vault_id to creator's `CreatorVaults` index and to each member's `MemberVaults` index
+    - Emit `grp_crt` event with `GroupVaultCreatedEvent`
+    - Return vault_id
+    - _Requirements: 1.1, 1.12, 1.13, 1.14, 1.15, 1.16, 1.17_
+  - [ ]* 5.3 Write unit tests for `create_group_vault`
+    - Happy path for each of the three supported tokens; verify all GroupVault fields and each member's MemberRecord
+    - Each invalid input variant: member count 4, member count 101, mismatched lengths, zero amount, negative amount, unsupported token, past unlock_time, past deadline, deadline >= unlock_time, Penalty rate 0, Penalty rate 10001
+    - Verify `get_vaults_by_creator` and `get_vaults_by_member` include the new vault_id
+    - _Requirements: 1.1–1.17_
+
+- [x] 6. Implement `deposit`
+  - [x] 6.1 Write deposit logic
+    - `caller.require_auth()`
+    - Load vault → `VaultNotFound`; check vault.state == FundingOpen → `WrongVaultState`
+    - Check ledger timestamp <= funding_deadline → `FundingDeadlinePassed`
+    - Load member record → `NotMember` if absent; check member.state == Committed → `WrongMemberState`
+    - Transfer caller's obligation amount from caller to contract via token_client
+    - Update member record to state `Deposited`; increment vault.deposited_count; save both
+    - Emit `mem_dep` event with `MemberDepositedEvent`
+    - _Requirements: 2.1–2.5, 2.7, 10.1, 10.4_
+  - [x] 6.2 Write vault activation logic (final deposit triggers ActiveLocked)
+    - After incrementing deposited_count, check if deposited_count == vault.members.len()
+    - If fully funded: iterate vault.members, transition each MemberRecord from Deposited → Active; set vault.state = ActiveLocked; save vault
+    - Emit `vlt_act` event with `VaultActivatedEvent`
+    - _Requirements: 2.6, 7.1, 8.1_
+  - [ ]* 6.3 Write unit tests for `deposit`
+    - Full deposit flow: all members deposit → vault transitions to ActiveLocked, all members in Active state
+    - Partial deposit: only some members deposit, vault remains FundingOpen
+    - Non-member deposit returns `NotMember`
+    - Double deposit returns `WrongMemberState`
+    - Deposit after funding_deadline returns `FundingDeadlinePassed`
+    - Deposit on non-FundingOpen vault returns `WrongVaultState`
+    - Verify `mem_dep` and `vlt_act` events emitted with correct fields
+    - _Requirements: 2.1–2.7, 8.4_
+
+- [ ] 7. Checkpoint — Ensure all tests pass
+  - Run `cargo test` and confirm all unit tests pass; ask the user if questions arise.
+
+- [x] 8. Implement `cancel`
+  - Load vault → `VaultNotFound`; check vault.state == FundingOpen → `WrongVaultState`
+  - Check ledger timestamp > funding_deadline → `FundingDeadlineNotPassed`
+  - Set vault.state = Cancelled; save vault
+  - Emit `vlt_can` event with `VaultCancelledEvent`
+  - No auth required (any caller may invoke)
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.9, 7.2_
+  - [ ]* 8.1 Write unit tests for `cancel`
+    - Happy path: partial funding, advance past deadline, cancel → vault state == Cancelled
+    - Cancel before deadline returns `FundingDeadlineNotPassed`
+    - Cancel on non-FundingOpen vault returns `WrongVaultState`
+    - Any caller (non-member) can cancel
+    - Verify `vlt_can` event emitted
+    - _Requirements: 3.1–3.4, 3.9_
+
+- [x] 9. Implement `withdraw`
+  - [x] 9.1 Write cancelled-vault refund path
+    - `caller.require_auth()`
+    - Load vault → `VaultNotFound`; call `maybe_transition_to_settlement_ready`
+    - If vault.state == Cancelled: load member record → `NotMember`; check member.state == Deposited → `WrongMemberState`
+    - Transfer member's obligation amount from contract to caller; update member.state = Withdrawn; save
+    - Emit `mem_wdr` event with `MemberWithdrawnEvent`
+    - _Requirements: 3.5, 3.6, 3.7, 3.8_
+  - [x] 9.2 Write mature withdrawal path (SettlementReady)
+    - If vault.state == SettlementReady: load member record → `NotMember`; check member.state == Active → `WrongMemberState`
+    - Transfer member's obligation amount from contract to caller; update member.state = Withdrawn; save
+    - Emit `mem_wdr` event with `MemberWithdrawnEvent`
+    - _Requirements: 4.1, 4.4, 4.5_
+  - [x] 9.3 Write early exit path (ActiveLocked + Penalty)
+    - If vault.state == ActiveLocked: load member record → `NotMember`; check member.state == Active → `WrongMemberState`
+    - If vault.lock_type == Strict → return `EarlyExitNotAllowed`
+    - Call `calculate_penalty(member.amount, vault.penalty_rate)` → (payout, penalty)
+    - Transfer payout to caller; call `add_to_pool(vault_id, penalty)`; update member.state = Exited; save
+    - Emit `mem_exit` event with `MemberEarlyExitEvent`
+    - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - [x] 9.4 Write guard for invalid vault states in withdraw
+    - If vault.state is FundingOpen or Resolved → return `WrongVaultState`
+    - _Requirements: 7.3, 7.5_
+  - [ ]* 9.5 Write unit tests for `withdraw`
+    - Cancelled vault: depositor gets full refund; non-deposited member returns `WrongMemberState`
+    - Mature withdrawal: advance past unlock_time, active member gets full obligation amount back
+    - Early exit (Penalty): verify exact payout and penalty; pool balance updated; member state == Exited
+    - Early exit (Strict): returns `EarlyExitNotAllowed`; member state unchanged
+    - Double withdraw returns `WrongMemberState`
+    - Non-member withdraw returns `NotMember`
+    - Withdraw on FundingOpen vault returns `WrongVaultState`
+    - Verify `mem_wdr` and `mem_exit` events emitted with correct fields
+    - _Requirements: 3.5–3.8, 4.1–4.5, 5.1–5.5, 8.5_
+
+- [ ] 10. Implement `claim_pool`
+  - [ ] 10.1 Write claim_pool logic
+    - `caller.require_auth()`
+    - Load vault → `VaultNotFound`; call `maybe_transition_to_settlement_ready`
+    - Check vault.state == SettlementReady → `WrongVaultState`
+    - Load member record → `NotMember`; check member.state == Active or Withdrawn → `WrongMemberState`
+    - Count active members via `count_active_members`; read pool balance via `get_pool`
+    - Compute claim: if vault.claimed_count == 0, caller is first claimer and receives base + remainder; else receives base
+    - Transfer claim amount to caller (even if zero); decrement pool by claim amount via `set_pool`; increment vault.claimed_count; update member.state = Claimed; save vault and member record
+    - Emit `pool_clm` event with `PoolClaimedEvent`
+    - _Requirements: 6.1–6.9, 10.1_
+  - [x] 10.2 Write vault resolution logic
+    - After updating member state to Claimed, check if all Active/Withdrawn members have now claimed (vault.claimed_count == count of members eligible to claim)
+    - If fully resolved: set vault.state = Resolved; save vault; emit `vlt_res` event with `VaultResolvedEvent`
+    - _Requirements: 6.8, 6.10, 7.1_
+  - [ ]* 10.3 Write unit tests for `claim_pool`
+    - Pool claim with early exits: verify each active member receives floor(pool/K); first claimer gets remainder
+    - Pool claim with zero pool: claim_pool succeeds, transfers zero, member state == Claimed
+    - All members claim → vault state transitions to Resolved
+    - claim_pool on non-SettlementReady vault returns `WrongVaultState`
+    - claim_pool by Exited member returns `WrongMemberState`
+    - Double claim_pool returns `WrongMemberState`
+    - Non-member claim_pool returns `NotMember`
+    - Verify `pool_clm` and `vlt_res` events emitted with correct fields
+    - _Requirements: 6.1–6.10, 8.6_
+
+- [ ] 11. Implement read-only query functions
+  - [x] 11.1 Implement `get_group_vault`, `get_member_state`, `get_pool_balance`, `get_member_claim_amount`
+    - `get_group_vault(vault_id)`: load from storage → `VaultNotFound` if absent
+    - `get_member_state(vault_id, member)`: load vault (VaultNotFound), load member record → `NotMember` if absent
+    - `get_pool_balance(vault_id)`: call `get_pool`; return 0 if absent
+    - `get_member_claim_amount(vault_id, member)`: load vault, count active members, compute floor(pool/active_count); return 0 if pool==0 or active_count==0
+    - _Requirements: 11.1–11.4, 11.7, 11.8_
+  - [x] 11.2 Implement `get_vaults_by_creator` and `get_vaults_by_member`
+    - `get_vaults_by_creator(creator)`: call `get_creator_vaults`; return empty Vec if absent
+    - `get_vaults_by_member(member)`: call `get_member_vaults`; return empty Vec if absent
+    - _Requirements: 11.5, 11.6_
+  - [ ]* 11.3 Write unit tests for read-only queries
+    - `get_group_vault` on unknown vault_id returns `VaultNotFound`
+    - `get_member_state` on non-member address returns `NotMember`
+    - `get_vaults_by_creator` / `get_vaults_by_member` return empty Vec when no vaults exist
+    - `get_pool_balance` returns correct accumulated penalty after early exits
+    - `get_member_claim_amount` returns floor(pool/active_count); returns 0 when pool is zero
+    - _Requirements: 11.1–11.8_
+
+- [x] 12. Checkpoint — Ensure all tests pass
+  - Run `cargo test` and confirm all unit tests pass; ask the user if questions arise.
+
+- [ ] 13. Write property-based tests
+  - [ ]* 13.1 Property 1 — Vault creation round-trip
+    - // Feature: collective-commitment-protocol, Property 1: Vault Creation Round-Trip
+    - Generate members ∈ [5,100], amounts ∈ [1, 10^15], valid times, lock_type, rate ∈ [1,10000]
+    - Assert `get_group_vault` fields match inputs; all members have MemberRecord state Committed with correct amount
+    - **Validates: Requirements 1.1, 1.12, 1.13, 1.17, 12.3**
+  - [ ]* 13.2 Property 2 — Invalid creation inputs rejected
+    - // Feature: collective-commitment-protocol, Property 2: Invalid Inputs Rejected
+    - Generate member count ∈ {0..4, 101..200}, mismatched lengths, amounts with ≤0, bad token, past times, deadline ≥ unlock_time, bad rate
+    - Assert appropriate `CcpError` returned; no vault record created
+    - **Validates: Requirements 1.2–1.11**
+  - [ ]* 13.3 Property 3 — Creator and member index completeness
+    - // Feature: collective-commitment-protocol, Property 3: Creator and Member Index Completeness
+    - Generate N ∈ [1,10] vaults for the same creator with varying member lists
+    - Assert `get_vaults_by_creator` contains all vault_ids; each member's `get_vaults_by_member` contains the vault_id
+    - **Validates: Requirements 1.15, 1.16, 11.5, 11.6**
+  - [ ]* 13.4 Property 4 — Deposit transitions and activation
+    - // Feature: collective-commitment-protocol, Property 4: Deposit Transitions and Activation
+    - Generate vault with M members; deposit all M in sequence
+    - Assert final deposit triggers vault state == ActiveLocked; all members in Active state
+    - **Validates: Requirements 2.1, 2.6, 2.7, 8.1**
+  - [ ]* 13.5 Property 5 — Non-member and wrong-state deposit rejected
+    - // Feature: collective-commitment-protocol, Property 5: Non-Member and Wrong-State Deposit Rejected
+    - Generate random address not in member list; generate member who already deposited
+    - Assert `NotMember` or `WrongMemberState` returned; no transfer occurs
+    - **Validates: Requirements 2.2, 2.3, 2.4, 8.4**
+  - [ ]* 13.6 Property 6 — Cancellation and full refund conservation
+    - // Feature: collective-commitment-protocol, Property 6: Cancellation and Full Refund Conservation
+    - Generate partial funding (1..M-1 members deposit), advance past deadline, cancel, all depositors withdraw
+    - Assert sum of refunds == sum of deposited obligation amounts; no value created or destroyed
+    - **Validates: Requirements 3.1, 3.5, 3.6, 3.8, 9.2, 9.5**
+  - [ ]* 13.7 Property 7 — Penalty arithmetic invariant
+    - // Feature: collective-commitment-protocol, Property 7: Penalty Arithmetic Invariant
+    - Generate amount ∈ [1, 10^18], penalty_rate ∈ [1, 10000]
+    - Assert penalty == floor(amount * rate / 10_000); payout + penalty == amount exactly
+    - **Validates: Requirements 5.1, 5.2, 9.2**
+  - [ ]* 13.8 Property 8 — Strict vault blocks early exit
+    - // Feature: collective-commitment-protocol, Property 8: Strict Vault Blocks Early Exit
+    - Generate Strict vault, fully funded, ledger time < unlock_time
+    - Assert `withdraw` returns `EarlyExitNotAllowed`; member state remains Active
+    - **Validates: Requirements 4.3, 5.3**
+  - [ ]* 13.9 Property 9 — Pool accumulation and distribution conservation
+    - // Feature: collective-commitment-protocol, Property 9: Pool Accumulation and Distribution Conservation
+    - Generate K ∈ [1, M-1] members exit early with random amounts/rates; remaining M-K reach maturity
+    - Assert pool == sum(penalties); sum(all claims) == pool; vault resolves to Resolved
+    - **Validates: Requirements 6.1, 6.2, 6.6, 9.3, 9.4**
+  - [ ]* 13.10 Property 10 — Mature withdrawal returns full obligation amount
+    - // Feature: collective-commitment-protocol, Property 10: Mature Withdrawal Returns Full Amount
+    - Generate fully-funded vault; advance past unlock_time; each active member withdraws
+    - Assert each member receives exactly their obligation amount; member state == Withdrawn
+    - **Validates: Requirements 4.1, 4.5**
+  - [ ]* 13.11 Property 11 — Double-action prevention
+    - // Feature: collective-commitment-protocol, Property 11: Double-Action Prevention
+    - Generate any vault; attempt deposit twice, withdraw twice, claim_pool twice
+    - Assert second call returns `WrongMemberState`; balances unchanged after second call
+    - **Validates: Requirements 8.4, 8.5, 8.6**
+  - [ ]* 13.12 Property 12 — Terminal state irreversibility
+    - // Feature: collective-commitment-protocol, Property 12: Terminal State Irreversibility
+    - Generate vault in Resolved or Cancelled state
+    - Assert all mutating operations (deposit, withdraw, cancel, claim_pool) return an error; vault state unchanged
+    - **Validates: Requirements 7.3, 7.5**
+
+- [x] 14. Write integration test helpers in `src/integration_tests.rs`
+  - Create `TestSetup` struct and `setup()` helper: register contract, register three SAC token contracts, call `initialize`, mint tokens to test accounts
+  - Implement `advance_time(env, delta)` helper following the same pattern as `time-locked-vault`
+  - Implement `make_members(env, n)` helper that generates N addresses and mints each a sufficient token balance
+  - [ ]* 14.1 Write end-to-end integration tests
+    - Full lifecycle: create → all deposit → advance past unlock_time → all withdraw → all claim_pool → vault resolves
+    - Funding failure: partial deposit → advance past deadline → cancel → all depositors refunded
+    - Early exit flow: some members exit early → remaining reach maturity → withdraw + claim_pool → verify pool distribution
+    - Query verification: all six read-only functions return correct data at each lifecycle stage
+    - Event verification: confirm all 8 event types appear in `env.events().all()` with correct fields
+    - _Requirements: all_
+
+- [x] 15. Final checkpoint — Ensure all tests pass
+  - Run `cargo test` and confirm all tests pass; ask the user if questions arise.
+
+## Notes
+
+- Tasks marked with `*` are optional and can be skipped for a faster MVP
+- Each task references specific requirements for traceability
+- Checkpoints at tasks 7, 12, and 15 ensure incremental validation
+- Property tests validate the 12 universal correctness properties from the design document
+- Unit tests validate concrete examples and edge cases
+- All persistent storage writes must extend TTL using `LEDGER_BUMP_AMOUNT = 535_000`
+- `calculate_penalty` is a pure function and can be tested without the contract environment
+- The `claimed_count` field on `GroupVault` tracks first-claimer status for pool remainder distribution
+- `maybe_transition_to_settlement_ready` must be called at the start of both `withdraw` and `claim_pool`
