@@ -8,6 +8,8 @@ Shadow-Stellar is a zero-knowledge vault protocol on the Stellar blockchain, bui
 
 The frontend (`Shadow-Stellar-app`) is a React 19 + Vite + TanStack Router dApp supporting all three contract types. It supports Freighter, xBull, Albedo, Rabet, Lobstr, and Hana wallets via the Stellar Wallets Kit.
 
+# [Demo website](https://shadow-stellar.vercel.app/)
+
 The "trusted individual" — the vault creator — earns two things:
 
 **1. Creator Commission (5%)**
