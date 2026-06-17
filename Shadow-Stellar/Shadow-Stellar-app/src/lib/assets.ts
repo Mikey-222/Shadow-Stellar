@@ -39,8 +39,8 @@ export const ASSETS: Record<AssetCode, AssetMeta> = {
   EURC: {
     code: "EURC",
     name: "Euro Coin",
-    // Testnet EURC SAC — issuer: GAB7S2YJIQAXD6FCLRWYAMEUQLZDXJ5I2TVP7ITJDWZEUOE3O67YNPXO
-    issuer: "CDTK22VXFIBQTJKX6HOA3VWQBTG335LDKM56OO3RIJIPYIUK6PPMURS3",
+    // Testnet EURC SAC — issuer: GB3Q6QDZYTHWT7E5PVS3W7FUT5GVAFC5KSZFFLPU25GO7VTC3NM2ZTVO
+    issuer: "CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ",
     displayDecimals: 2,
     accent: "text-[oklch(0.78_0.16_155)]",
     ring: "border-[oklch(0.6_0.16_155/0.4)] bg-[oklch(0.6_0.16_155/0.08)]",

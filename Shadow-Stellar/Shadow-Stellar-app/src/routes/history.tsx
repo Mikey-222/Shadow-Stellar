@@ -3,9 +3,13 @@ import { motion } from "framer-motion";
 import { AppShell } from "@/components/AppShell";
 import { MachinedCard } from "@/components/MachinedCard";
 import { AssetChip } from "@/components/AssetChip";
-import { useVaultStore } from "@/store/vaults";
+import { useVaultStore, type Transaction } from "@/store/vaults";
+import { useZkVaultStore, type ZkTransaction } from "@/store/zk-vaults";
+import { useGroupVaultStore, type GroupTransaction } from "@/store/group-vaults";
 import { ASSET_CODES, ASSETS, formatAsset, type AssetCode } from "@/lib/assets";
 import { cn } from "@/lib/utils";
+
+type AnyTxn = Transaction | ZkTransaction | GroupTransaction;
 
 export const Route = createFileRoute("/history")({
   head: () => ({
@@ -19,26 +23,38 @@ export const Route = createFileRoute("/history")({
 });
 
 function History() {
-  const transactions = useVaultStore((s) => s.transactions);
+  const tlvTxns = useVaultStore((s) => s.transactions);
+  const zkTxns = useZkVaultStore((s) => s.transactions);
+  const groupTxns = useGroupVaultStore((s) => s.transactions);
   const vaults = useVaultStore((s) => s.vaults);
 
+  const transactions: AnyTxn[] = [...tlvTxns, ...zkTxns, ...groupTxns].sort(
+    (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
+  );
+
+  const txnAsset = (t: AnyTxn): AssetCode => "asset" in t ? t.asset : t.token;
+
   // Aggregate per asset
-  const sumByAsset = (predicate: (t: (typeof transactions)[number]) => boolean) => {
+  const sumByAsset = (predicate: (t: AnyTxn) => boolean) => {
     const out: Record<AssetCode, number> = { XLM: 0, USDC: 0, EURC: 0 };
     for (const t of transactions.filter(predicate)) {
-      out[t.asset] = (out[t.asset] ?? 0) + Math.abs(t.amount);
+      out[txnAsset(t)] = (out[txnAsset(t)] ?? 0) + Math.abs(t.amount);
     }
     return out;
   };
   const sumPenaltyByAsset = () => {
     const out: Record<AssetCode, number> = { XLM: 0, USDC: 0, EURC: 0 };
-    for (const t of transactions) out[t.asset] = (out[t.asset] ?? 0) + (t.penalty ?? 0);
+    for (const t of transactions) {
+      if ("penalty" in t && t.penalty) out[txnAsset(t)] = (out[txnAsset(t)] ?? 0) + t.penalty;
+    }
     return out;
   };
 
-  const lockedTotals = sumByAsset((t) => t.type === "create");
+  const lockedTotals = sumByAsset(
+    (t) => t.type === "create" || t.type === "zk-deposit" || t.type === "group-deposit",
+  );
   const withdrawnTotals = sumByAsset(
-    (t) => t.type === "withdraw" || t.type === "early-withdraw",
+    (t) => t.type === "withdraw" || t.type === "early-withdraw" || t.type === "zk-withdraw" || t.type === "group-withdraw" || t.type === "group-cancel" || t.type === "group-claim",
   );
   const penaltyTotals = sumPenaltyByAsset();
   const completed = vaults.filter(
@@ -74,54 +90,61 @@ function History() {
                 No activity yet.
               </div>
             ) : (
-              transactions.map((t, i) => (
-                <motion.div
-                  key={t.id}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.25, delay: Math.min(i * 0.02, 0.4) }}
-                >
-                  <Link
-                    to="/vaults/$vaultId"
-                    params={{ vaultId: t.vaultId }}
-                    className="flex items-center justify-between gap-4 p-5 hover:bg-surface-raised/50 transition-colors"
+              transactions.map((t, i) => {
+                const isZk = t.type === "zk-deposit" || t.type === "zk-withdraw";
+                const isGroup = t.type.startsWith("group-");
+                const txnName = "vaultName" in t ? t.vaultName : isZk ? `ZK Entry #${t.entryId}` : `Group #${t.vaultId}`;
+                const linkTo = isZk ? "/zk/$entryId" : isGroup ? "/group/$vaultId" : "/vaults/$vaultId";
+                const linkParam = isZk ? { entryId: t.entryId } : { vaultId: "vaultId" in t ? t.vaultId : "0" };
+                return (
+                  <motion.div
+                    key={t.id}
+                    initial={{ opacity: 0, x: -8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.25, delay: Math.min(i * 0.02, 0.4) }}
                   >
-                    <div className="flex items-center gap-4 min-w-0">
-                      <TxnIcon type={t.type} />
-                      <div className="min-w-0">
-                        <div className="font-medium truncate flex items-center gap-2">
-                          {t.vaultName}
-                          <AssetChip asset={t.asset} />
-                        </div>
-                        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mt-0.5">
-                          {labelFor(t.type)} ·{" "}
-                          {new Date(t.at).toLocaleDateString("en-GB", {
-                            day: "2-digit",
-                            month: "short",
-                            year: "numeric",
-                          })}
+                    <Link
+                      to={linkTo}
+                      params={linkParam}
+                      className="flex items-center justify-between gap-4 p-5 hover:bg-surface-raised/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-4 min-w-0">
+                        <TxnIcon type={t.type} />
+                        <div className="min-w-0">
+                          <div className="font-medium truncate flex items-center gap-2">
+                            {txnName}
+                            <AssetChip asset={txnAsset(t)} />
+                          </div>
+                          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mt-0.5">
+                            {labelFor(t.type)} ·{" "}
+                            {new Date(t.at).toLocaleDateString("en-GB", {
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                            })}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div
-                        className={cn(
-                          "font-mono tabular text-base",
-                          t.amount < 0 ? "text-amber-core" : "text-success",
+                      <div className="text-right shrink-0">
+                        <div
+                          className={cn(
+                            "font-mono tabular text-base",
+                            t.amount < 0 ? "text-amber-core" : "text-success",
+                          )}
+                        >
+                          {t.amount < 0 ? "−" : "+"}
+                          {formatAsset(Math.abs(t.amount), txnAsset(t))} {txnAsset(t)}
+                        </div>
+                        {"penalty" in t && t.penalty && t.penalty > 0 && (
+                          <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-destructive mt-0.5">
+                            −{formatAsset(t.penalty, txnAsset(t))} penalty
+                          </div>
                         )}
-                      >
-                        {t.amount < 0 ? "−" : "+"}
-                        {formatAsset(Math.abs(t.amount), t.asset)} {t.asset}
                       </div>
-                      {t.penalty && t.penalty > 0 && (
-                        <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-destructive mt-0.5">
-                          −{formatAsset(t.penalty, t.asset)} penalty
-                        </div>
-                      )}
-                    </div>
-                  </Link>
-                </motion.div>
-              ))
+                    </Link>
+                  </motion.div>
+                );
+              })
             )}
           </div>
         </MachinedCard>
@@ -140,6 +163,18 @@ function labelFor(t: string) {
       return "Early withdrawal";
     case "mature":
       return "Vault matured";
+    case "zk-deposit":
+      return "ZK deposit";
+    case "zk-withdraw":
+      return "ZK withdrawal";
+    case "group-deposit":
+      return "Group deposit";
+    case "group-withdraw":
+      return "Group withdrawal";
+    case "group-cancel":
+      return "Group cancelled";
+    case "group-claim":
+      return "Pool claim";
     default:
       return t;
   }
@@ -149,11 +184,14 @@ function TxnIcon({ type }: { type: string }) {
   const map: Record<string, { glyph: string; tone: string }> = {
     create: { glyph: "🔒", tone: "border-amber-core/30 bg-amber-core/10 text-amber-core" },
     withdraw: { glyph: "✓", tone: "border-success/30 bg-success/10 text-success" },
-    "early-withdraw": {
-      glyph: "✗",
-      tone: "border-destructive/30 bg-destructive/10 text-destructive",
-    },
+    "early-withdraw": { glyph: "✗", tone: "border-destructive/30 bg-destructive/10 text-destructive" },
     mature: { glyph: "★", tone: "border-success/30 bg-success/10 text-success" },
+    "zk-deposit": { glyph: "🔏", tone: "border-amber-core/30 bg-amber-core/10 text-amber-core" },
+    "zk-withdraw": { glyph: "🔑", tone: "border-amber-core/30 bg-amber-core/10 text-amber-core" },
+    "group-deposit": { glyph: "🤝", tone: "border-success/30 bg-success/10 text-success" },
+    "group-withdraw": { glyph: "✓", tone: "border-success/30 bg-success/10 text-success" },
+    "group-cancel": { glyph: "✗", tone: "border-destructive/30 bg-destructive/10 text-destructive" },
+    "group-claim": { glyph: "🏦", tone: "border-success/30 bg-success/10 text-success" },
   };
   const { glyph, tone } = map[type] ?? map.create;
   return (

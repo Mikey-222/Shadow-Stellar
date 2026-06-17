@@ -192,7 +192,7 @@ function ZkVaultDetail() {
         {/* Contract link */}
         <div className="text-center font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           <a
-            href={`https://stellar.expert/explorer/testnet/contract/CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7`}
+            href={`https://stellar.expert/explorer/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525`}
             target="_blank" rel="noopener noreferrer"
             className="hover:text-amber-core transition-colors"
           >

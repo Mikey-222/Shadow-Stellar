@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AppShell } from "@/components/AppShell";
 import { MachinedCard } from "@/components/MachinedCard";
@@ -10,6 +10,7 @@ import { useWalletStore } from "@/store/wallet";
 import { ASSETS, formatAsset } from "@/lib/assets";
 import { formatUnlockDate, formatUnlockTimezones } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { deriveSecretFromAddress, computeZkDepositCommitment, getZkMemberRecord } from "@/lib/ccp-contract";
 
 export const Route = createFileRoute("/group/$vaultId")({
   head: () => ({ meta: [{ title: "Group Vault — Shadow-Stellar" }] }),
@@ -34,23 +35,83 @@ function GroupVaultDetail() {
   const rawVault = useGroupVaultStore((s) => s.vaults.find((v) => v.id === vaultId));
   const fetchVaults = useGroupVaultStore((s) => s.fetchVaults);
   const fetchVaultById = useGroupVaultStore((s) => s.fetchVaultById);
+  const fetchZkVaultById = useGroupVaultStore((s) => s.fetchZkVaultById);
   const loading = useGroupVaultStore((s) => s.loading);
   const deposit = useGroupVaultStore((s) => s.deposit);
+  const depositZk = useGroupVaultStore((s) => s.depositZk);
   const withdraw = useGroupVaultStore((s) => s.withdraw);
+  const withdrawZk = useGroupVaultStore((s) => s.withdrawZk);
   const cancel = useGroupVaultStore((s) => s.cancel);
   const claimPool = useGroupVaultStore((s) => s.claimPool);
+  const claimPoolZk = useGroupVaultStore((s) => s.claimPoolZk);
+  const saveMemberSecret = useGroupVaultStore((s) => s.saveMemberSecret);
   const address = useWalletStore((s) => s.address);
 
   const [signing, setSigning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<"deposit" | "withdraw" | "cancel" | "claim" | null>(null);
   const [freshLoaded, setFreshLoaded] = useState(false);
+  const [zkSecret, setZkSecret] = useState("");
+  const [zkSecretError, setZkSecretError] = useState<string | null>(null);
+  const [autoRevealed, setAutoRevealed] = useState(false);
+
+  // Reset ZK membership state when wallet address changes (switching between member wallets)
+  const prevAddressRef = useRef(address);
+  useEffect(() => {
+    if (prevAddressRef.current !== address) {
+      prevAddressRef.current = address;
+      setAutoRevealed(false);
+      setZkSecret("");
+      setZkSecretError(null);
+      // Clear stale ZK membership from previous wallet
+      saveMemberSecret(vaultId, "", "", -1);
+    }
+  }, [address]);
+
+  // Auto-detect member slot using memberSecrets (browser-local) or address-derived secret
+  useEffect(() => {
+    if (!rawVault?.isZk || rawVault.memberSecret || autoRevealed || !address) return;
+    (async () => {
+      // 1. memberSecrets (fast — creator's localStorage)
+      const entry = rawVault.memberSecrets?.find(s => s.address === address);
+      if (entry) {
+        setAutoRevealed(true);
+        saveMemberSecret(vaultId, entry.secret, entry.commitment, entry.slot);
+        return;
+      }
+      // 2. Address-derived secret — try each slot's amount to find matching commitment
+      try {
+        const derived = await deriveSecretFromAddress(address);
+        for (let i = 0; i < rawVault.members.length; i++) {
+          const m = rawVault.members[i];
+          if (m.obligationStroops && m.commitment) {
+            const expected = await computeZkDepositCommitment(BigInt(m.obligationStroops), derived);
+            if (expected === m.commitment) {
+              setAutoRevealed(true);
+              saveMemberSecret(vaultId, derived, expected, i);
+              return;
+            }
+          }
+        }
+      } catch { /* fall through — manual input */ }
+    })();
+  }, [rawVault?.isZk, rawVault?.memberSecret, autoRevealed, address, rawVault?.memberSecrets, rawVault?.members]);
 
   // Always fetch fresh data from chain on mount — never trust stale localStorage
   useEffect(() => {
     setFreshLoaded(false);
-    fetchVaultById(vaultId).then(() => setFreshLoaded(true)).catch(() => setFreshLoaded(true));
-  }, [vaultId]); // eslint-disable-line react-hooks/exhaustive-deps
+    const mode = rawVault?.isZk;
+    if (mode === true) {
+      fetchZkVaultById(vaultId).then(() => setFreshLoaded(true)).catch(() => setFreshLoaded(true));
+    } else if (mode === false) {
+      fetchVaultById(vaultId).then(() => setFreshLoaded(true)).catch(() => setFreshLoaded(true));
+    } else {
+      // Unknown mode — try ZK first, fall back to standard
+      fetchZkVaultById(vaultId).then(() => setFreshLoaded(true)).catch(() => {
+        fetchVaultById(vaultId).then(() => setFreshLoaded(true)).catch(() => setFreshLoaded(true));
+      });
+    }
+  }, [vaultId, rawVault?.isZk]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show loading spinner until fresh data arrives
   const vault = freshLoaded ? rawVault : null;
@@ -86,7 +147,11 @@ function GroupVaultDetail() {
   }
 
   const myMember = address
-    ? vault.members.find((m) => m.address.trim() === address.trim())
+    ? vault.isZk
+      ? vault.memberSecret && vault.slotIndex !== undefined
+        ? vault.members[vault.slotIndex] ?? null
+        : null
+      : vault.members.find((m) => m.address.trim() === address.trim())
     : null;
   const myState = myMember?.state ?? null;
   const unlockDate = new Date(vault.unlockTime * 1000);
@@ -111,10 +176,17 @@ function GroupVaultDetail() {
     setSigning(true);
     setActionError(null);
     try {
-      if (action === "deposit") await deposit(vaultId);
-      else if (action === "withdraw") await withdraw(vaultId);
-      else if (action === "cancel") await cancel(vaultId);
-      else if (action === "claim") await claimPool(vaultId);
+      if (vault?.isZk) {
+        if (action === "deposit") await depositZk(vaultId);
+        else if (action === "withdraw") await withdrawZk(vaultId);
+        else if (action === "cancel") await cancel(vaultId);
+        else if (action === "claim") await claimPoolZk(vaultId);
+      } else {
+        if (action === "deposit") await deposit(vaultId);
+        else if (action === "withdraw") await withdraw(vaultId);
+        else if (action === "cancel") await cancel(vaultId);
+        else if (action === "claim") await claimPool(vaultId);
+      }
       setConfirmAction(null);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Transaction failed");
@@ -136,9 +208,14 @@ function GroupVaultDetail() {
             {/* Header */}
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 mb-2">
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
                   <AssetChip asset={vault.token} size="md" />
                   <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Group Vault</span>
+                  {vault.isZk && (
+                    <span className="font-mono text-[9px] uppercase tracking-[0.2em] px-2 py-0.5 border border-amber-core/40 text-amber-core rounded-sm bg-amber-core/5">
+                      ZK Privacy
+                    </span>
+                  )}
                 </div>
                 <h1 className="text-3xl md:text-4xl font-medium tracking-tight">
                   {vault.name || `Group Vault #${vault.id}`}
@@ -209,23 +286,31 @@ function GroupVaultDetail() {
             <div className="flex flex-col gap-3">
               <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Members</div>
               <div className="grid grid-cols-1 gap-2">
-                {vault.members.map((m) => (
-                  <div key={m.address} className={cn(
-                    "flex items-center justify-between gap-4 p-3 border rounded-sm",
-                    m.address === address ? "border-amber-core/40 bg-amber-core/5" : "border-edge bg-surface-deep",
-                  )}>
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className={cn("font-mono text-[10px] px-2 py-0.5 border rounded-sm shrink-0", MEMBER_STATE_STYLE[m.state] ?? "text-muted-foreground border-edge")}>
-                        {MEMBER_STATE_ICON[m.state] ?? "?"} {m.state}
-                      </span>
-                      <span className="font-mono text-xs text-foreground truncate">{m.address}</span>
-                      {m.address === address && <span className="font-mono text-[10px] text-amber-core shrink-0">You</span>}
+                {vault.members.map((m, idx) => {
+                  const isMe = vault.isZk
+                    ? vault.slotIndex === idx
+                    : m.address === address;
+                  const label = vault.isZk
+                    ? `Slot ${idx}`
+                    : m.address;
+                  return (
+                    <div key={vault.isZk ? `slot-${idx}` : m.address} className={cn(
+                      "flex items-center justify-between gap-4 p-3 border rounded-sm",
+                      isMe ? "border-amber-core/40 bg-amber-core/5" : "border-edge bg-surface-deep",
+                    )}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className={cn("font-mono text-[10px] px-2 py-0.5 border rounded-sm shrink-0", MEMBER_STATE_STYLE[m.state] ?? "text-muted-foreground border-edge")}>
+                          {MEMBER_STATE_ICON[m.state] ?? "?"} {m.state}
+                        </span>
+                        <span className="font-mono text-xs text-foreground truncate">{label}</span>
+                        {isMe && <span className="font-mono text-[10px] text-amber-core shrink-0">You</span>}
+                      </div>
+                      <div className="font-mono text-sm tabular text-foreground shrink-0">
+                        {formatAsset(m.amount, vault.token)} {vault.token}
+                      </div>
                     </div>
-                    <div className="font-mono text-sm tabular text-foreground shrink-0">
-                      {formatAsset(m.amount, vault.token)} {vault.token}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
@@ -244,18 +329,109 @@ function GroupVaultDetail() {
                           {formatAsset(myMember.amount, vault.token)} {vault.token} obligation
                         </span>
                       </div>
+                    ) : vault.isZk ? (
+                      <div className="font-mono text-sm text-muted-foreground">Enter your member secret to prove membership</div>
                     ) : (
                       <div className="font-mono text-sm text-muted-foreground">Not a member — or refresh to load your status</div>
                     )}
                   </div>
                   <button
-                    onClick={() => { setFreshLoaded(false); fetchVaultById(vaultId).then(() => setFreshLoaded(true)); }}
+                    onClick={() => {
+                      setFreshLoaded(false);
+                      const fetcher = vault.isZk ? fetchZkVaultById : fetchVaultById;
+                      fetcher(vaultId).then(() => setFreshLoaded(true));
+                    }}
                     disabled={loading}
                     className="font-mono text-[10px] uppercase tracking-[0.15em] text-amber-core hover:underline disabled:opacity-50 shrink-0"
                   >
                     {loading ? "Loading…" : "↻ Refresh"}
                   </button>
                 </div>
+
+                {/* ZK member secret */}
+                {vault.isZk && !vault.memberSecret && !autoRevealed && (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={zkSecret}
+                        onChange={(e) => setZkSecret(e.target.value)}
+                        placeholder="Paste your member secret (64 hex chars)"
+                        className="flex-1 bg-surface-deep border border-edge px-3 py-2 font-mono text-xs text-foreground rounded-sm outline-none focus:border-amber-core transition-colors"
+                      />
+                      <button
+                        onClick={async () => {
+                          setZkSecretError(null);
+                          if (!zkSecret || zkSecret.length !== 64) return setZkSecretError("Invalid secret — must be 64 hex chars");
+                          try {
+                            // Find slot by trying each cached amount
+                            const memberCount = vault.memberCount ?? vault.members.length;
+                            let matchedSlot: number | undefined;
+                            for (let s = 0; s < memberCount; s++) {
+                              const m = vault.members[s];
+                              if (m.obligationStroops && (m.commitment || true)) {
+                                const expected = await computeZkDepositCommitment(BigInt(m.obligationStroops), zkSecret);
+                                const onChainCommitment = vault.members[s].commitment
+                                  ?? (await getZkMemberRecord(BigInt(vaultId), s))?.member_commitment;
+                                if (onChainCommitment === expected) {
+                                  matchedSlot = s;
+                                  break;
+                                }
+                              }
+                            }
+                            if (matchedSlot === undefined) {
+                              return setZkSecretError("Secret doesn't match any member slot in this vault");
+                            }
+                            // Recompute the matching commitment for the found slot
+                            const foundMember = vault.members[matchedSlot];
+                            const foundCommitment = foundMember?.obligationStroops
+                              ? await computeZkDepositCommitment(BigInt(foundMember.obligationStroops), zkSecret)
+                              : matchedSlot < vault.members.length ? vault.members[matchedSlot].commitment ?? "" : "";
+                            saveMemberSecret(vaultId, zkSecret, foundCommitment, matchedSlot);
+                            setZkSecret("");
+                            setAutoRevealed(true);
+                          } catch (e) {
+                            setZkSecretError(String(e));
+                          }
+                        }}
+                        className="bg-amber-core text-primary-foreground font-mono text-xs uppercase tracking-[0.15em] px-4 py-2 rounded-sm hover:shadow-amber-glow transition-shadow shrink-0"
+                      >
+                        Unlock
+                      </button>
+                    </div>
+                    {zkSecretError && (
+                      <div className="font-mono text-[10px] text-destructive">{zkSecretError}</div>
+                    )}
+                    <div className="font-mono text-[9px] text-muted-foreground">
+                      Ask the vault creator for your member secret. It proves you belong to this vault.
+                    </div>
+                  </div>
+                )}
+                {/* Auto-revealed secret — shown once when auto-detected */}
+                {vault.isZk && autoRevealed && address && vault.memberSecrets?.find(s => s.address === address) && (
+                  <div className="bg-amber-core/5 border border-amber-core/30 p-3 rounded-sm">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-amber-core mb-1">Your Member Secret</div>
+                    <div className="font-mono text-[11px] text-foreground break-all select-all">
+                      {vault.memberSecrets.find(s => s.address === address)?.secret}
+                    </div>
+                    <div className="font-mono text-[9px] text-muted-foreground mt-2">
+                      {vault.memberSecret ? "✓ Membership confirmed — you can deposit." : "Auto-detected. Saving..."}
+                    </div>
+                  </div>
+                )}
+                {/* Confirmed membership — show obligation amount and actions */}
+                {vault.isZk && vault.memberSecret && vault.slotIndex !== undefined && (
+                  <div className="bg-success/5 border border-success/30 p-3 rounded-sm flex flex-col gap-2">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.15em] text-success">✓ Membership Confirmed</div>
+                    <div className="font-mono text-sm text-foreground">
+                      Slot {vault.slotIndex} — Obligation: {formatAsset(vault.members[vault.slotIndex]?.amount ?? 0, vault.token)} {vault.token}
+                    </div>
+                    {vault.lockType === "penalty" && (
+                      <div className="font-mono text-[10px] text-muted-foreground">
+                        Early exit penalty: {vault.penaltyPercent}%
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Debug: show connected address vs member addresses */}
                 <div className="font-mono text-[9px] text-muted-foreground bg-surface-deep border border-edge p-2 rounded-sm break-all">
@@ -268,9 +444,11 @@ function GroupVaultDetail() {
                   <div>My state: <span className="text-foreground">{myMember?.state ?? "null"}</span></div>
                 </div>
 
-                {/* Deposit button — always show if member is in list and vault is funding open */}
+                {/* Deposit button — always show if member is in list (or ZK member confirmed) and vault is funding open */}
                 {vault.status === "funding" && !isPastDeadline && address &&
-                  vault.members.some((m) => m.address.trim() === address.trim()) && (
+                  (vault.isZk
+                    ? vault.memberSecret && vault.slotIndex !== undefined
+                    : vault.members.some((m) => m.address.trim() === address.trim())) && (
                   <button
                     onClick={() => setConfirmAction("deposit")}
                     className="w-full bg-amber-core text-primary-foreground font-mono text-sm uppercase tracking-[0.18em] px-6 py-4 rounded-sm hover:shadow-amber-glow transition-shadow flex items-center justify-center gap-3"

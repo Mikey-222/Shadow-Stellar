@@ -103,9 +103,9 @@ We track contract events using Stellar Expert's built-in event viewer.
 
 | Contract | Events URL |
 |---|---|
-| Time-Locked Vault v2 | https://stellar.expert/explorer/testnet/contract/CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M/events |
-| CCP + ZK v2 | https://stellar.expert/explorer/testnet/contract/CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ/events |
-| ZK Commitment Protocol | https://stellar.expert/explorer/testnet/contract/CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7/events |
+| Time-Locked Vault v2 | https://stellar.expert/explorer/testnet/contract/CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H/events |
+| CCP + ZK v2 | https://stellar.expert/explorer/testnet/contract/CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ/events |
+| ZK Commitment Protocol | https://stellar.expert/explorer/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525/events |
 
 **Security:** [Completed Security Checklist](./Security.md)
 
@@ -255,11 +255,11 @@ A single-user vault that locks XLM, USDC, or EURC for a defined period. Two lock
 
 | Item | Value |
 |---|---|
-| **Contract** | `CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M` |
-| Explorer | https://stellar.expert/explorer/testnet/contract/CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M |
-| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M |
-| Deploy Tx | `d412c44f8c58779ac20ef1558a3eb4c526169bb97696ee39dc1dec007dbb334d` |
-| Init Tx | `83c75e4ad2116071e5b4584fb4e59cfbada624cbaa1a348234f7255ce0e26ce9` |
+| **Contract** | `CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H` |
+| Explorer | https://stellar.expert/explorer/testnet/contract/CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H |
+| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H |
+| Deploy Tx | `2e9712638db77333656a9ff11d1b4103b5b226bf109a97549576a783ed2c33b0` |
+| Init Tx | `8014fcee44375e7b6caa9e1fe304428504c1f4939f9baba008cc8d87dd0af8bd` |
 
 **Functions:** `initialize` · `create_vault` · `withdraw` · `withdraw_treasury` · `get_vault` · `get_vaults_by_owner` · `get_treasury_balance`
 
@@ -271,11 +271,11 @@ Multi-user group escrow with enforced participation, funding deadlines, early-ex
 
 | Item | Value |
 |---|---|
-| **Contract** | `CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ` |
-| Explorer | https://stellar.expert/explorer/testnet/contract/CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ |
-| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ |
-| Deploy Tx | `4b71d5d899d1bfbe37b2b8fbd5d832d9263e11d0dc88782b1836cdcbad969540` |
-| Init Tx | `e11b009043133cbfe80f7070adcecd386b1debe2963f2648e89ceefc52b854df` |
+| **Contract** | `CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ` |
+| Explorer | https://stellar.expert/explorer/testnet/contract/CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ |
+| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ |
+| Deploy Tx | `a41f9d039edf34bebf98e02e348bbbf5f4468e0ae9340b8ff0aa8e88aeae527f` |
+| Init Tx | `0856789ff0f451d6f6788654a3098af04c9e67e65ee651d6bb025939be2f3c48` |
 
 **Standard Functions:** `create_group_vault` · `deposit` · `withdraw` · `cancel` · `claim_pool` · `get_group_vault` · `get_member_state` · `get_vaults_by_member` · `get_vaults_by_creator` · `get_pool_balance` · `get_member_claim_amount`
 
@@ -289,11 +289,11 @@ A standalone zero-knowledge vault contract. Users lock XLM, USDC, or EURC backed
 
 | Item | Value |
 |---|---|
-| **Contract** | `CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7` |
-| Explorer | https://stellar.expert/explorer/testnet/contract/CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7 |
-| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7 |
-| Deploy Tx | `f8e10f35c25fec48d127e31051ecee0e94e9cc37332ac74dc988cd8d08470b95` |
-| Init Tx | `e7ba30c2e06c3014a69022a7d3c2a45f9a39549d02676758fde882332aa08aa4` |
+| **Contract** | `CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525` |
+| Explorer | https://stellar.expert/explorer/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525 |
+| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525 |
+| Deploy Tx | `783c80f0e21cc8bde47c4eb028780d26004b1c34814b48d026ce1b82906ee8e0` |
+| Init Tx | `23222a3c8b3739427dc4acd4a5cc96a908121db43b9890bfb191c2dbde1e68b0` |
 
 **Functions:** `zk_deposit` · `zk_withdraw` · `verify_range_proof` · `is_nullifier_spent_fn` · `get_entry_fn` · `get_entries_by_depositor` · `get_commitment` · `get_next_entry_id`
 
@@ -303,9 +303,9 @@ A standalone zero-knowledge vault contract. Users lock XLM, USDC, or EURC backed
 
 | Contract | Address | Status |
 |---|---|---|
-| Time-Locked Vault v2 | `CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M` | ✅ Live |
-| CCP + ZK v2 | `CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ` | ✅ Live |
-| ZK Commitment Protocol | `CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7` | ✅ Live |
+| Time-Locked Vault v2 | `CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H` | ✅ Live |
+| CCP + ZK v2 | `CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ` | ✅ Live |
+| ZK Commitment Protocol | `CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525` | ✅ Live |
 
 **Network:** Stellar Testnet · RPC: `https://soroban-testnet.stellar.org` · Horizon: `https://horizon-testnet.stellar.org`
 
@@ -315,7 +315,7 @@ A standalone zero-knowledge vault contract. Users lock XLM, USDC, or EURC backed
 |---|---|
 | XLM | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | USDC | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
-| EURC | `CDTK22VXFIBQTJKX6HOA3VWQBTG335LDKM56OO3RIJIPYIUK6PPMURS3` |
+| EURC | `CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ` |
 
 ---
 
@@ -378,7 +378,7 @@ A decentralized private vault protocol on Stellar — solo vaults, collective gr
 |---|---|
 | XLM | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | USDC | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
-| EURC | `CDTK22VXFIBQTJKX6HOA3VWQBTG335LDKM56OO3RIJIPYIUK6PPMURS3` |
+| EURC | `CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ` |
 
 ---
 
@@ -702,15 +702,15 @@ stellar contract optimize --wasm time-locked-vault/target/wasm32-unknown-unknown
 stellar contract deploy \
   --wasm time-locked-vault/target/wasm32-unknown-unknown/release/time_locked_vault.optimized.wasm \
   --source deployer --network testnet
-# → CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M
+# → CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H
 
-stellar contract invoke --id CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M \
+stellar contract invoke --id CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H \
   --source deployer --network testnet \
   -- initialize \
   --protocol_owner GBAWEM6LAMZQIW6JRQPLEIZBZTQHRCUYGTZNCYIWD2BXOF4DE4QYA7OM \
   --xlm_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
   --usdc_token CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA \
-  --eurc_token CDTK22VXFIBQTJKX6HOA3VWQBTG335LDKM56OO3RIJIPYIUK6PPMURS3
+  --eurc_token CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ
 ```
 
 ### Deploy CCP + ZK v2
@@ -721,14 +721,14 @@ stellar contract optimize --wasm collective-commitment-protocol/target/wasm32-un
 stellar contract deploy \
   --wasm collective-commitment-protocol/target/wasm32-unknown-unknown/release/collective_commitment_protocol.optimized.wasm \
   --source deployer --network testnet
-# → CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ
+# → CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ
 
-stellar contract invoke --id CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ \
+stellar contract invoke --id CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ \
   --source deployer --network testnet \
   -- initialize \
   --xlm_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
   --usdc_token CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA \
-  --eurc_token CDTK22VXFIBQTJKX6HOA3VWQBTG335LDKM56OO3RIJIPYIUK6PPMURS3
+  --eurc_token CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ
 ```
 
 ### Deploy ZK Commitment Protocol
@@ -739,15 +739,15 @@ stellar contract optimize --wasm zk-commitment-protocol/target/wasm32-unknown-un
 stellar contract deploy \
   --wasm zk-commitment-protocol/target/wasm32-unknown-unknown/release/zk_commitment_protocol.optimized.wasm \
   --source deployer --network testnet
-# → CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7
+# → CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525
 
-stellar contract invoke --id CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7 \
+stellar contract invoke --id CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525 \
   --source deployer --network testnet \
   -- initialize \
   --owner GBAWEM6LAMZQIW6JRQPLEIZBZTQHRCUYGTZNCYIWD2BXOF4DE4QYA7OM \
   --xlm_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
   --usdc_token CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA \
-  --eurc_token CDTK22VXFIBQTJKX6HOA3VWQBTG335LDKM56OO3RIJIPYIUK6PPMURS3
+  --eurc_token CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ
 ```
 
 ---
@@ -757,18 +757,18 @@ stellar contract invoke --id CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4Q
 | Item | Value |
 |---|---|
 | Network | Stellar Testnet |
-| **TLV v2** | `CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M` |
-| **CCP + ZK v2** | `CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ` |
-| **ZK Commitment Protocol** | `CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7` |
+| **TLV v2** | `CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H` |
+| **CCP + ZK v2** | `CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ` |
+| **ZK Commitment Protocol** | `CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525` |
 | Protocol Owner | `GBAWEM6LAMZQIW6JRQPLEIZBZTQHRCUYGTZNCYIWD2BXOF4DE4QYA7OM` |
 | XLM SAC | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | USDC SAC | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
-| EURC SAC | `CDTK22VXFIBQTJKX6HOA3VWQBTG335LDKM56OO3RIJIPYIUK6PPMURS3` |
+| EURC SAC | `CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ` |
 | RPC URL | `https://soroban-testnet.stellar.org` |
 | Horizon URL | `https://horizon-testnet.stellar.org` |
-| TLV v2 Explorer | https://stellar.expert/explorer/testnet/contract/CDGFAVUTIX56JKSQYXF2OYYNLAOWORAMKMUNQTM6Z5NKVF6ZUBUS6T4M |
-| CCP + ZK Explorer | https://stellar.expert/explorer/testnet/contract/CAOER4YOQ7V7H77AWGUZVYL75QB5ZBKO6UUYGPATBO6AEDTBUQ2ZS4EZ |
-| ZCP Explorer | https://stellar.expert/explorer/testnet/contract/CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7 |
+| TLV v2 Explorer | https://stellar.expert/explorer/testnet/contract/CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H |
+| CCP + ZK Explorer | https://stellar.expert/explorer/testnet/contract/CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ |
+| ZCP Explorer | https://stellar.expert/explorer/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525 |
 
 
 ---

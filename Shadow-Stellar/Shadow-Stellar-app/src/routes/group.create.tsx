@@ -26,6 +26,7 @@ const DURATION_PRESETS = [
 function CreateGroupVault() {
   const navigate = useNavigate();
   const createGroupVault = useGroupVaultStore((s) => s.createGroupVault);
+  const createGroupVaultZk = useGroupVaultStore((s) => s.createGroupVaultZk);
   const balances = useWalletStore((s) => s.balances);
   const address = useWalletStore((s) => s.address);
 
@@ -44,6 +45,7 @@ function CreateGroupVault() {
   const [lockType, setLockType] = useState<"strict" | "penalty">("penalty");
   const [penaltyPercent, setPenaltyPercent] = useState(10);
   const [vaultName, setVaultName] = useState("");
+  const [privacyMode, setPrivacyMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
 
@@ -75,15 +77,25 @@ function CreateGroupVault() {
     if (validMembers.length < 5) return setError("Minimum 5 members required");
     setSigning(true);
     try {
-      const vault = await createGroupVault({
-        name: vaultName.trim() || undefined,
-        token: asset,
-        members: validMembers.map((r) => ({ address: r.address.trim(), amount: Number(r.amount) })),
-        durationDays,
-        fundingHours,
-        lockType,
-        penaltyPercent,
-      });
+      const vault = privacyMode
+        ? await createGroupVaultZk({
+            name: vaultName.trim() || undefined,
+            token: asset,
+            members: validMembers.map((r) => ({ address: r.address.trim(), amount: Number(r.amount) })),
+            durationDays,
+            fundingHours,
+            lockType,
+            penaltyPercent,
+          })
+        : await createGroupVault({
+            name: vaultName.trim() || undefined,
+            token: asset,
+            members: validMembers.map((r) => ({ address: r.address.trim(), amount: Number(r.amount) })),
+            durationDays,
+            fundingHours,
+            lockType,
+            penaltyPercent,
+          });
       navigate({ to: "/group/$vaultId", params: { vaultId: vault.id } });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Transaction failed");
@@ -139,6 +151,22 @@ function CreateGroupVault() {
                           <div className="font-mono text-[10px] text-muted-foreground tabular">{formatAsset(balances[code] ?? 0, code)}</div>
                         </button>
                       ))}
+                    </div>
+
+                    {/* Privacy Mode Toggle */}
+                    <div className="border-t border-edge pt-6 mt-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label small>Zero-Knowledge Privacy Mode</Label>
+                          <p className="font-mono text-[10px] text-muted-foreground mt-1">
+                            Enables ZK proofs for deposits and withdrawals. Member addresses are concealed.
+                          </p>
+                        </div>
+                        <button type="button" onClick={() => setPrivacyMode(!privacyMode)}
+                          className={cn("w-12 h-6 rounded-full transition-colors relative shrink-0", privacyMode ? "bg-amber-core" : "bg-edge")}>
+                          <div className={cn("absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform", privacyMode ? "translate-x-6" : "translate-x-0.5")} />
+                        </button>
+                      </div>
                     </div>
                   </>
                 )}
@@ -289,6 +317,10 @@ function CreateGroupVault() {
                     <input value={vaultName} onChange={(e) => setVaultName(e.target.value)} maxLength={60}
                       placeholder="Group vault name (optional)"
                       className="w-full bg-surface-deep border border-edge px-4 py-3 font-mono text-foreground rounded-sm outline-none focus:border-amber-core transition-colors" />
+                    <div className={cn("p-3 rounded-sm font-mono text-[10px] uppercase tracking-[0.18em] flex items-center gap-2 border",
+                      privacyMode ? "border-amber-core/40 bg-amber-core/5 text-amber-core" : "border-edge bg-surface-deep text-muted-foreground")}>
+                      {privacyMode ? "🔏 ZK Privacy Mode — ON" : "🔓 ZK Privacy Mode — OFF"}
+                    </div>
                     <div className="bg-surface-deep border border-edge p-6 rounded-sm space-y-4">
                       <Row label="Asset" value={`${ASSETS[asset].glyph} ${asset}`} />
                       <Row label="Members" value={`${validMembers.length}`} />

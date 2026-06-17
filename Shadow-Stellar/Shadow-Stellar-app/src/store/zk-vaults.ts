@@ -44,8 +44,20 @@ export interface ZkVault {
   depositedAt: string;
 }
 
+export type ZkTxnType = "zk-deposit" | "zk-withdraw";
+
+export interface ZkTransaction {
+  id: string;
+  entryId: string;
+  token: AssetCode;
+  type: ZkTxnType;
+  amount: number;
+  at: string;
+}
+
 interface ZkVaultState {
   vaults: ZkVault[];
+  transactions: ZkTransaction[];
   loading: boolean;
   error: string | null;
 
@@ -78,6 +90,7 @@ export const useZkVaultStore = create<ZkVaultState>()(
   persist(
     (set, get) => ({
       vaults: [],
+      transactions: [],
       loading: false,
       error: null,
 
@@ -149,6 +162,7 @@ export const useZkVaultStore = create<ZkVaultState>()(
           assignedId = String(s.scValToNative(result.returnValue) as bigint);
         }
 
+        const now = new Date().toISOString();
         const vault: ZkVault = {
           id:         assignedId,
           token,
@@ -158,12 +172,21 @@ export const useZkVaultStore = create<ZkVaultState>()(
           commitment: proof.commitment,
           withdrawn:  false,
           name,
-          depositedAt: new Date().toISOString(),
+          depositedAt: now,
+        };
+
+        const txn: ZkTransaction = {
+          id: `zkt_${crypto.randomUUID()}`,
+          entryId: assignedId,
+          token,
+          type: "zk-deposit",
+          amount: -amount,
+          at: now,
         };
 
         // Optimistically debit balance
         walletStore.adjustBalance(token, -amount);
-        set({ vaults: [vault, ...get().vaults] });
+        set({ vaults: [vault, ...get().vaults], transactions: [txn, ...get().transactions] });
 
         // Refresh from chain after a short delay
         setTimeout(() => get().fetchVaults(), 4000);
@@ -194,6 +217,17 @@ export const useZkVaultStore = create<ZkVaultState>()(
         const signedXdr = await walletStore.signTransaction(txXdr);
         await submitZkTx(signedXdr);
 
+        const now = new Date().toISOString();
+
+        const txn: ZkTransaction = {
+          id: `zkt_${crypto.randomUUID()}`,
+          entryId,
+          token: vault.token,
+          type: "zk-withdraw",
+          amount: vault.amount,
+          at: now,
+        };
+
         // Optimistically credit balance
         walletStore.adjustBalance(vault.token, vault.amount);
 
@@ -201,13 +235,45 @@ export const useZkVaultStore = create<ZkVaultState>()(
           vaults: get().vaults.map(v =>
             v.id === entryId ? { ...v, withdrawn: true } : v,
           ),
+          transactions: [txn, ...get().transactions],
         });
 
         setTimeout(() => get().fetchVaults(), 3000);
       },
 
-      reset: () => set({ vaults: [], loading: false, error: null }),
+      reset: () => set({ vaults: [], transactions: [], loading: false, error: null }),
     }),
-    { name: "zk-vault-store-v1" },
+    {
+      name: "zk-vault-store-v1",
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        const { vaults, transactions } = state;
+        // Migration: generate transactions for vaults that don't have them
+        if (vaults.length > 0 && (!transactions || transactions.length === 0)) {
+          const generated: ZkTransaction[] = vaults.flatMap((v) => {
+            const deposit: ZkTransaction = {
+              id: `zkt_${crypto.randomUUID()}`,
+              entryId: v.id,
+              token: v.token,
+              type: "zk-deposit",
+              amount: -v.amount,
+              at: v.depositedAt,
+            };
+            const withdraw: ZkTransaction | null = v.withdrawn
+              ? {
+                  id: `zkt_${crypto.randomUUID()}`,
+                  entryId: v.id,
+                  token: v.token,
+                  type: "zk-withdraw",
+                  amount: v.amount,
+                  at: new Date().toISOString(),
+                }
+              : null;
+            return withdraw ? [deposit, withdraw] : [deposit];
+          });
+          useZkVaultStore.setState({ transactions: generated });
+        }
+      },
+    },
   ),
 );

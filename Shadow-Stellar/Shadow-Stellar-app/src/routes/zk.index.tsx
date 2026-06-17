@@ -72,9 +72,9 @@ function ZkVaults() {
         {/* Contract info */}
         <div className="bg-surface-deep border border-amber-core/20 rounded-sm p-4 font-mono text-[10px] text-muted-foreground flex flex-col gap-1">
           <span className="text-amber-core uppercase tracking-[0.15em]">ZK Contract (Testnet)</span>
-          <span className="text-foreground break-all">CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7</span>
+          <span className="text-foreground break-all">CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525</span>
           <a
-            href="https://stellar.expert/explorer/testnet/contract/CAV4N6PWTHGLM5FA6XFM6VN2B6OOO7I5HDLHFQ5OQWJ6SEA7S4QVCKV7"
+            href="https://stellar.expert/explorer/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525"
             target="_blank" rel="noopener noreferrer"
             className="text-amber-core hover:underline mt-1"
           >
