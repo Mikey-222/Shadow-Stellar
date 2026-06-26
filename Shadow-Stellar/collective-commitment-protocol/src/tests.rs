@@ -1,16 +1,13 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    symbol_short,
-    testutils::{Address as _, Events, Ledger, LedgerInfo},
+    testutils::{Address as _, Ledger, LedgerInfo},
     token::{StellarAssetClient, TokenClient},
-    Address, Env, TryIntoVal, Vec,
+    Address, Env, Vec,
 };
 
 use crate::{
-    CcpContract, CcpContractClient, CcpError, GroupVaultCreatedEvent, LockType, MemberDepositedEvent,
-    MemberEarlyExitEvent, MemberState, MemberWithdrawnEvent, PoolClaimedEvent, VaultActivatedEvent,
-    VaultCancelledEvent, VaultResolvedEvent, VaultState,
+    CcpContract, CcpContractClient, CcpError, LockType, MemberState, VaultState,
 };
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -27,7 +24,7 @@ struct TestSetup {
 fn ledger_info(timestamp: u64, seq: u32) -> LedgerInfo {
     LedgerInfo {
         timestamp,
-        protocol_version: 22,
+        protocol_version: 26,
         sequence_number: seq,
         network_id: Default::default(),
         base_reserve: 10,
@@ -53,7 +50,7 @@ fn setup() -> TestSetup {
     let eurc = env.register_stellar_asset_contract_v2(eurc_admin).address();
 
     let client = CcpContractClient::new(&env, &contract_id);
-    client.initialize(&xlm, &usdc, &eurc);
+    client.initialize(&xlm, &usdc, &eurc, &None);
 
     let mut members = Vec::new(&env);
     for _ in 0..5 {

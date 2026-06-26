@@ -1,0 +1,6 @@
+blinding = "0x2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a"
+recipient = "0x1234567890abcdef"
+amount = "1000000"
+entry_id = "0"
+commitment = "0x16b570d3e0fd7e2d51be2d6bce2bda695631460b2e43d3128704a17f9269906c"
+nullifier = "0x208bc62bea85b274ca9a204b13f46cf1db77ec8b5bce6520191d009795aae873"

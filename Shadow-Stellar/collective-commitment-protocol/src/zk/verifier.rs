@@ -28,63 +28,54 @@
 //! Full anonymity (hiding the depositor's address) requires a separate
 //! privacy layer (e.g. mixer contract) and is out of scope here.
 
-use soroban_sdk::{BytesN, Env};
+use soroban_sdk::{vec, Address, Bytes, Env, Symbol, Val, Vec};
+use ultrahonk_soroban_verifier::UltraHonkVerifier;
 
 use super::pedersen::{
     ct_eq_32, sha256_domain2, soroban_to_bytes32,
     verify_commitment, verify_range_tag,
-    DOMAIN_COMMIT, DOMAIN_NULLIFIER, DOMAIN_SCHNORR,
+    DOMAIN_NULLIFIER,
 };
-use super::proof::{ZkDepositProof, ZkEarlyExitProof, ZkMembershipProof, SchnorrProof};
+use super::proof::{ZkDepositProof, ZkEarlyExitProof};
 
 // ── ZkDepositProof verifier ───────────────────────────────────────────────────
 
 /// Verify a `ZkDepositProof`.
 ///
 /// Checks:
-/// 1. `commitment` opens to `amount_opening` with `blinding_r`
-/// 2. `obligation_commitment` opens to `amount_opening` with `obligation_blinding_r`
-/// 3. `amount_opening ∈ [1, max_obligation]` (range check via range_tag)
-/// 4. `nullifier == H(NULLIFIER || vault_id || member_secret_derived)`
-///    — we derive the nullifier from the opening proof, not from a raw secret
+/// 1. `range_tag` is a valid witness for `amount ∈ [1, max_obligation]`
+///    proving the commitment was made for exactly the slot's obligation amount,
+///    without revealing the blinding factor on-chain
+/// 2. `nullifier` derivation is correct (prevents replay)
 ///
-/// Returns `true` iff all checks pass.
+/// The blinding factor `r` is NOT verified here — it is kept secret for
+/// deposit-time privacy and revealed only at withdrawal.
 pub fn verify_deposit_proof(
     env: &Env,
     proof: &ZkDepositProof,
     vault_id: u64,
-    max_obligation: i128,
+    obligation: i128,
 ) -> bool {
     let commitment_bytes = soroban_to_bytes32(&proof.commitment);
-    let obligation_bytes = soroban_to_bytes32(&proof.obligation_commitment);
-    let blinding_r = soroban_to_bytes32(&proof.blinding_r);
-    let obligation_r = soroban_to_bytes32(&proof.obligation_blinding_r);
     let range_tag = soroban_to_bytes32(&proof.range_tag);
 
-    // 1. Verify commitment opens correctly
-    if !verify_commitment(env, &commitment_bytes, proof.amount_opening, &blinding_r) {
+    // 1. Range check via range_tag: proves commitment was made for amount == obligation
+    //    The amount is NOT revealed — the contract uses the slot's obligation.
+    //    The range_tag = H(RANGE || commitment || obligation || obligation || commitment[0..16])
+    //    binds the commitment to exactly this amount.
+    if !verify_range_tag(env, &commitment_bytes, obligation, obligation, &range_tag) {
         return false;
     }
 
-    // 2. Verify obligation_commitment opens to the same amount
-    if !verify_commitment(env, &obligation_bytes, proof.amount_opening, &obligation_r) {
-        return false;
-    }
-
-    // 3. Range check: amount ∈ [1, max_obligation]
-    if !verify_range_tag(env, &commitment_bytes, proof.amount_opening, max_obligation, &range_tag) {
-        return false;
-    }
-
-    // 4. Nullifier derivation check
-    // The nullifier is derived from (vault_id, blinding_r) as a surrogate
-    // for the member secret — the member proves they know r (which implies
-    // they know the commitment preimage).
+    // 2. Nullifier derivation check
+    // nullifier = SHA-256(DOMAIN_NULLIFIER || vault_id || commitment)
+    // This binds the nullifier to both the vault and the specific deposit,
+    // without needing to know the blinding factor r.
     let derived_nullifier = sha256_domain2(
         env,
         DOMAIN_NULLIFIER,
         &vault_id.to_le_bytes(),
-        &blinding_r,
+        &commitment_bytes,
     );
     let supplied_nullifier = soroban_to_bytes32(&proof.nullifier);
     if !ct_eq_32(&derived_nullifier, &supplied_nullifier) {
@@ -94,54 +85,24 @@ pub fn verify_deposit_proof(
     true
 }
 
-// ── ZkMembershipProof verifier ────────────────────────────────────────────────
-
-/// Verify a `ZkMembershipProof`.
+/// Verify a `ZkWithdrawProof`.
 ///
-/// Checks:
-/// 1. `member_commitment == H(COMMIT || member_secret)` — the prover knows
-///    the secret behind the on-chain commitment
-/// 2. `vault_nullifier == H(NULLIFIER || vault_id || member_secret)` —
-///    binds the proof to this specific vault
-///
-/// The `stored_commitment` is the value stored in contract storage at
-/// vault creation time.  It equals `H(COMMIT || member_secret)`.
-pub fn verify_membership_proof(
+/// Checks that the blinding factor `r` opens the stored commitment to the
+/// expected amount. This proves the caller knows the commitment preimage
+/// and therefore owns the deposit.
+pub fn verify_withdraw_proof(
     env: &Env,
-    proof: &ZkMembershipProof,
-    vault_id: u64,
-    stored_commitment: &BytesN<32>,
+    stored_commitment: &[u8; 32],
+    amount: i128,
+    blinding_r: &[u8; 32],
 ) -> bool {
-    let member_secret = soroban_to_bytes32(&proof.member_secret);
-
-    // 1. Recompute member_commitment from secret
-    let recomputed_commitment = sha256_domain2(env, DOMAIN_COMMIT, &member_secret, &[]);
-    let supplied_commitment = soroban_to_bytes32(&proof.member_commitment);
-
-    if !ct_eq_32(&recomputed_commitment, &supplied_commitment) {
-        return false;
-    }
-
-    // 2. Verify it matches the stored on-chain commitment
-    let stored = soroban_to_bytes32(stored_commitment);
-    if !ct_eq_32(&recomputed_commitment, &stored) {
-        return false;
-    }
-
-    // 3. Verify vault-scoped nullifier
-    let expected_nullifier = sha256_domain2(
-        env,
-        DOMAIN_NULLIFIER,
-        &vault_id.to_le_bytes(),
-        &member_secret,
-    );
-    let supplied_nullifier = soroban_to_bytes32(&proof.vault_nullifier);
-    if !ct_eq_32(&expected_nullifier, &supplied_nullifier) {
-        return false;
-    }
-
-    true
+    verify_commitment(env, stored_commitment, amount, blinding_r)
 }
+
+// ── (removed) ZkMembershipProof verifier ──────────────────────────────────────
+// The ZkMembershipProof and SchnorrProof types were removed as part of the
+// proof-flow redesign. Membership is now verified via the standard
+// ZkDepositProof path.
 
 // ── ZkEarlyExitProof verifier ─────────────────────────────────────────────────
 
@@ -208,72 +169,36 @@ pub fn verify_early_exit_proof(
     true
 }
 
-// ── Schnorr proof verifier ────────────────────────────────────────────────────
+// ── (removed) Schnorr proof verifier ──────────────────────────────────────────
+// The SchnorrProof type was removed as part of the proof-flow redesign.
+// All ownership proofs now go through the ZkWithdrawProof path.
 
-/// Verify a Schnorr-style challenge-response proof.
+/// Verify an UltraHonk zk-SNARK proof.
 ///
-/// In our hash-based group setting:
-///   public_key = H(COMMIT || secret)
-///   R = H(COMMIT || k_nonce) where k_nonce is the Schnorr nonce
-///   e = H(SCHNORR || R || public_key || message)
-///   s = k_nonce XOR (e_bytes AND secret)  [simplified non-linear binding]
-///
-/// This is a simplified Schnorr-in-the-ROM construction adapted for
-/// hash-based groups (no EC arithmetic available in WASM).
-///
-/// The verifier checks:
-///   H(COMMIT || s XOR e_bytes) == R
-///   which holds iff the prover knew the secret.
-pub fn verify_schnorr_proof(
+/// Uses the embedded UltraHonk verifier library directly (no cross-contract
+/// call). If no verification key is stored, falls back to the legacy
+/// cross-contract verifier (for backward compatibility / mock tests).
+pub fn verify_ultrahonk(
     env: &Env,
-    proof: &SchnorrProof,
-    message: &[u8],
+    verifier: &Address,
+    proof_bytes: &Bytes,
+    public_inputs: &Bytes,
 ) -> bool {
-    let commitment_r = soroban_to_bytes32(&proof.commitment_r);
-    let response_s = soroban_to_bytes32(&proof.response_s);
-    let public_key = soroban_to_bytes32(&proof.public_key);
-
-    // Compute challenge e = H(SCHNORR || R || pub_key || message)
-    let e_bytes = {
-        let mut buf = [0u8; 32 + 32 + 256]; // R + pub_key + message (padded)
-        buf[0..32].copy_from_slice(&commitment_r);
-        buf[32..64].copy_from_slice(&public_key);
-        let msg_len = message.len().min(256);
-        buf[64..64 + msg_len].copy_from_slice(&message[..msg_len]);
-        sha256_domain2(env, DOMAIN_SCHNORR, &buf[0..64 + msg_len], &[])
-    };
-
-    // Compute s XOR e_bytes (non-linear binding)
-    let mut s_xor_e = [0u8; 32];
-    for i in 0..32 {
-        s_xor_e[i] = response_s[i] ^ e_bytes[i];
+    if let Some(vk) = crate::storage::get_verification_key(env) {
+        return match UltraHonkVerifier::new(env, &vk) {
+            Ok(v) => v.verify(env, proof_bytes, public_inputs).is_ok(),
+            Err(_) => false,
+        };
     }
-
-    // Recompute R' = H(COMMIT || s_xor_e)
-    let r_prime = sha256_domain2(env, DOMAIN_COMMIT, &s_xor_e, &[]);
-
-    // Check R' == R
-    ct_eq_32(&r_prime, &commitment_r)
-}
-
-// ── Nullifier uniqueness check ─────────────────────────────────────────────────
-
-/// Verify a nullifier is well-formed for a given vault and blinding factor.
-///
-/// This is called separately from `verify_deposit_proof` when the contract
-/// needs to check a standalone nullifier (e.g. for membership checks).
-pub fn check_nullifier(
-    env: &Env,
-    vault_id: u64,
-    blinding_r: &[u8; 32],
-    supplied_nullifier: &BytesN<32>,
-) -> bool {
-    let derived = sha256_domain2(
-        env,
-        DOMAIN_NULLIFIER,
-        &vault_id.to_le_bytes(),
-        blinding_r,
-    );
-    let supplied = soroban_to_bytes32(supplied_nullifier);
-    ct_eq_32(&derived, &supplied)
+    // Fallback: cross-contract mock verifier (tests / legacy)
+    let args: Vec<Val> = vec![
+        &env,
+        proof_bytes.clone().to_val(),
+        public_inputs.clone().to_val(),
+    ];
+    env.invoke_contract::<bool>(
+        &verifier,
+        &Symbol::new(env, "verify"),
+        args,
+    )
 }

@@ -1,0 +1,18 @@
+[package]
+name = "ultrahonk_soroban_verifier"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Rust verifier for UltraHonk proofs"
+repository = "https://github.com/NethermindEth/rs-soroban-ultrahonk"
+
+[dependencies]
+soroban-sdk = "26.0.1"
+
+[dev-dependencies]
+soroban-sdk = { version = "26.0.1", features = ["testutils"] }
+
+[features]
+default = []
+std = []
+trace = []

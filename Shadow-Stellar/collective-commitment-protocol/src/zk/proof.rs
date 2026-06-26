@@ -32,13 +32,13 @@ use soroban_sdk::{contracttype, BytesN};
 /// A zero-knowledge deposit proof.
 ///
 /// Submitted by a member during `deposit_zk`.  The contract verifier checks:
-/// 1. `commitment` opens to `amount` with `blinding_r` → commitment binding
-/// 2. `range_tag` is a valid range witness for `amount ∈ [1, obligation]`
-/// 3. `nullifier` equals `H(vault_id || member_secret)` and is not yet used
-/// 4. `obligation_commitment` opens to the same `amount` as the deposit
+/// 1. `range_tag` is a valid range witness for `amount ∈ [1, obligation]`
+///    using the slot's declared obligation (the amount is COMMITTED, not revealed)
+/// 2. `nullifier` is freshly derived and not yet used
 ///
-/// The `amount` and both blinding factors are **not stored on-chain** —
-/// they are used only during verification and discarded.
+/// The blinding factor `r` is NOT submitted at deposit time — it is kept secret
+/// and revealed only during withdrawal to prove ownership (see ZkWithdrawProof).
+/// This gives deposit-time hiding of the commitment preimage.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ZkDepositProof {
@@ -46,26 +46,22 @@ pub struct ZkDepositProof {
     pub commitment: BytesN<32>,
 
     /// Range tag proving amount ∈ [1, obligation]: H(RANGE || commitment || amount || max)
+    /// The verifier re-derives this using the slot's obligation as both amount and max.
     pub range_tag: BytesN<32>,
 
-    /// Nullifier: H(NULLIFIER || vault_id || member_secret) — prevents replay
+    /// Nullifier: H(NULLIFIER || vault_id || r) — prevents replay
     pub nullifier: BytesN<32>,
+}
 
-    /// Commitment to the declared obligation (must equal commitment to deposit amount)
-    pub obligation_commitment: BytesN<32>,
-
-    /// The actual deposit amount (opening of `commitment` and `obligation_commitment`)
-    /// This is the plaintext value the verifier checks.
-    /// In a full ZK system this would be a proof element, not revealed.
-    /// For Soroban's practical constraints we use "commit-and-reveal" where the
-    /// amount is verified but only the commitment is stored persistently.
-    pub amount_opening: i128,
-
-    /// Blinding factor for `commitment`
+/// A zero-knowledge withdrawal proof.
+///
+/// Proves ownership of a deposit by revealing the blinding factor `r`.
+/// The contract re-derives the commitment and checks it matches the stored value.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ZkWithdrawProof {
+    /// The blinding factor used at deposit time — reveals ownership
     pub blinding_r: BytesN<32>,
-
-    /// Blinding factor for `obligation_commitment`
-    pub obligation_blinding_r: BytesN<32>,
 }
 
 /// A zero-knowledge membership proof.
@@ -157,12 +153,4 @@ pub struct SchnorrProof {
 pub struct ZkProof {
     /// Core deposit proof
     pub deposit_proof: ZkDepositProof,
-
-    /// Optional Schnorr authentication proof.
-    /// Set all fields to zero bytes when not used.
-    pub schnorr_proof: SchnorrProof,
-
-    /// Whether to enforce Schnorr authentication.
-    /// If false, `schnorr_proof` is ignored.
-    pub use_schnorr: bool,
 }

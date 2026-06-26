@@ -3,6 +3,7 @@ import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AppShell } from "@/components/AppShell";
 import { MachinedCard } from "@/components/MachinedCard";
+import { HexFileUpload } from "@/components/HexFileUpload";
 import { useZkVaultStore } from "@/store/zk-vaults";
 import { useWalletStore } from "@/store/wallet";
 import { ASSET_CODES, ASSETS, formatAsset, type AssetCode } from "@/lib/assets";
@@ -15,9 +16,12 @@ export const Route = createFileRoute("/zk/create")({
 
 const STEPS = ["Asset", "Amount", "Confirm"] as const;
 
+type ProofMode = "sha256" | "ultrahonk";
+
 function CreateZkVault() {
   const navigate = useNavigate();
   const createZkVault = useZkVaultStore(s => s.createZkVault);
+  const createZkVaultUltraHonk = useZkVaultStore(s => s.createZkVaultUltraHonk);
   const balances = useWalletStore(s => s.balances);
 
   const [step, setStep] = useState(0);
@@ -26,6 +30,10 @@ function CreateZkVault() {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
+  const [proofMode, setProofMode] = useState<ProofMode>("sha256");
+  const [ultraHonkCommitment, setUltraHonkCommitment] = useState("");
+  const [ultraHonkProof, setUltraHonkProof] = useState("");
+  const [ultraHonkPublicInputs, setUltraHonkPublicInputs] = useState("");
 
   const balance = balances[asset] ?? 0;
 
@@ -34,6 +42,11 @@ function CreateZkVault() {
     if (step === 1) {
       if (!amount || amount <= 0) return setError("Enter an amount greater than zero");
       if (amount > balance) return setError(`Insufficient ${asset} balance`);
+      if (proofMode === "ultrahonk") {
+        if (!ultraHonkCommitment) return setError("Enter commitment hex");
+        if (!ultraHonkProof) return setError("Enter proof bytes hex");
+        if (!ultraHonkPublicInputs) return setError("Enter public inputs hex");
+      }
     }
     setStep(s => Math.min(STEPS.length - 1, s + 1));
   };
@@ -45,8 +58,18 @@ function CreateZkVault() {
     if (amount > balance) return setError(`Insufficient ${asset} balance`);
     setSigning(true);
     try {
-      const vault = await createZkVault({ token: asset, amount, name: name.trim() || undefined });
-      navigate({ to: "/zk/$entryId", params: { entryId: vault.id } });
+      if (proofMode === "ultrahonk") {
+        const vault = await createZkVaultUltraHonk({
+          token: asset, amount, name: name.trim() || undefined,
+          commitment: ultraHonkCommitment,
+          proofBytes: ultraHonkProof,
+          publicInputs: ultraHonkPublicInputs,
+        });
+        navigate({ to: "/zk/$entryId", params: { entryId: vault.id } });
+      } else {
+        const vault = await createZkVault({ token: asset, amount, name: name.trim() || undefined });
+        navigate({ to: "/zk/$entryId", params: { entryId: vault.id } });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Transaction failed");
     } finally {
@@ -110,6 +133,22 @@ function CreateZkVault() {
                         never your plaintext amount. Withdrawal requires proving knowledge of the blinding factor.
                       </div>
                     </div>
+                    {/* Proof type toggle */}
+                    <div className="bg-surface-deep border border-edge rounded-sm p-4 flex flex-col gap-3">
+                      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Proof System</div>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setProofMode("sha256")}
+                          className={cn("flex-1 p-3 border rounded-sm font-mono text-xs uppercase tracking-[0.15em] transition-colors",
+                            proofMode === "sha256" ? "border-amber-core bg-amber-core/5 text-foreground" : "border-edge text-muted-foreground hover:text-foreground")}>
+                          SHA-256 Hash
+                        </button>
+                        <button type="button" onClick={() => setProofMode("ultrahonk")}
+                          className={cn("flex-1 p-3 border rounded-sm font-mono text-xs uppercase tracking-[0.15em] transition-colors",
+                            proofMode === "ultrahonk" ? "border-amber-core bg-amber-core/5 text-foreground" : "border-edge text-muted-foreground hover:text-foreground")}>
+                          UltraHONK SNARK
+                        </button>
+                      </div>
+                    </div>
                   </>
                 )}
 
@@ -149,6 +188,17 @@ function CreateZkVault() {
                         {formatAsset(balance, asset)} {asset}
                       </span>
                     </div>
+                    {proofMode === "ultrahonk" && (
+                      <div className="flex flex-col gap-3 pt-2 border-t border-edge">
+                        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-core">UltraHonk Proof Data</div>
+                        <HexFileUpload label="Commitment" value={ultraHonkCommitment} onChange={setUltraHonkCommitment}
+                          placeholder="Commitment hex (64 chars)" accept=".hex,.txt,.commitment" />
+                        <HexFileUpload label="Proof bytes" value={ultraHonkProof} onChange={setUltraHonkProof}
+                          placeholder="Proof bytes hex" accept=".hex,.proof,.txt" />
+                        <HexFileUpload label="Public inputs" value={ultraHonkPublicInputs} onChange={setUltraHonkPublicInputs}
+                          placeholder="Public inputs hex" accept=".hex,.pub,.txt" />
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -163,19 +213,21 @@ function CreateZkVault() {
                     <div className="bg-surface-deep border border-edge p-6 rounded-sm space-y-4">
                       <Row label="Asset"       value={`${ASSETS[asset].glyph} ${asset}`} />
                       <Row label="Amount"      value={`${formatAsset(amount, asset)} ${asset}`} highlight />
-                      <Row label="Proof type"  value="SHA-256 Pedersen Commitment" />
+                      <Row label="Proof type"  value={proofMode === "ultrahonk" ? "UltraHONK zk-SNARK" : "SHA-256 Pedersen Commitment"} />
                       <Row label="Privacy"     value="Amount hidden on-chain ✓" />
-                      <Row label="Withdrawal"  value="Requires blinding factor proof" />
+                      <Row label="Withdrawal"  value={proofMode === "ultrahonk" ? "Requires UltraHONK proof" : "Requires blinding factor proof"} />
                     </div>
 
-                    <div className="bg-amber-core/5 border border-amber-core/30 p-4 rounded-sm flex flex-col gap-2">
-                      <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-core">⚠ Save your blinding factor</div>
-                      <div className="text-sm text-muted-foreground leading-relaxed">
-                        After deposit, your blinding factor is stored in this browser's localStorage.
-                        If you clear site data, you <span className="text-destructive font-mono">cannot withdraw</span>.
-                        Export it from the vault detail page after creation.
+                    {proofMode === "sha256" && (
+                      <div className="bg-amber-core/5 border border-amber-core/30 p-4 rounded-sm flex flex-col gap-2">
+                        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-amber-core">⚠ Save your blinding factor</div>
+                        <div className="text-sm text-muted-foreground leading-relaxed">
+                          After deposit, your blinding factor is stored in this browser's localStorage.
+                          If you clear site data, you <span className="text-destructive font-mono">cannot withdraw</span>.
+                          Export it from the vault detail page after creation.
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </>
                 )}
 

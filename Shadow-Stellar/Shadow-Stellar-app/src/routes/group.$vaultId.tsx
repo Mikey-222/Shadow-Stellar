@@ -39,6 +39,7 @@ function GroupVaultDetail() {
   const loading = useGroupVaultStore((s) => s.loading);
   const deposit = useGroupVaultStore((s) => s.deposit);
   const depositZk = useGroupVaultStore((s) => s.depositZk);
+  const depositZkUltraHonk = useGroupVaultStore((s) => s.depositZkUltraHonk);
   const withdraw = useGroupVaultStore((s) => s.withdraw);
   const withdrawZk = useGroupVaultStore((s) => s.withdrawZk);
   const cancel = useGroupVaultStore((s) => s.cancel);
@@ -54,6 +55,8 @@ function GroupVaultDetail() {
   const [zkSecret, setZkSecret] = useState("");
   const [zkSecretError, setZkSecretError] = useState<string | null>(null);
   const [autoRevealed, setAutoRevealed] = useState(false);
+  const [ultraHonkProof, setUltraHonkProof] = useState("");
+  const [ultraHonkPubInputs, setUltraHonkPubInputs] = useState("");
 
   // Reset ZK membership state when wallet address changes (switching between member wallets)
   const prevAddressRef = useRef(address);
@@ -177,8 +180,13 @@ function GroupVaultDetail() {
     setActionError(null);
     try {
       if (vault?.isZk) {
-        if (action === "deposit") await depositZk(vaultId);
-        else if (action === "withdraw") await withdrawZk(vaultId);
+        if (action === "deposit") {
+          if (ultraHonkProof && ultraHonkPubInputs) {
+            await depositZkUltraHonk(vaultId, ultraHonkProof, ultraHonkPubInputs);
+          } else {
+            await depositZk(vaultId);
+          }
+        }
         else if (action === "cancel") await cancel(vaultId);
         else if (action === "claim") await claimPoolZk(vaultId);
       } else {
@@ -449,12 +457,41 @@ function GroupVaultDetail() {
                   (vault.isZk
                     ? vault.memberSecret && vault.slotIndex !== undefined
                     : vault.members.some((m) => m.address.trim() === address.trim())) && (
-                  <button
-                    onClick={() => setConfirmAction("deposit")}
-                    className="w-full bg-amber-core text-primary-foreground font-mono text-sm uppercase tracking-[0.18em] px-6 py-4 rounded-sm hover:shadow-amber-glow transition-shadow flex items-center justify-center gap-3"
-                  >
-                    ✦ Deposit {formatAsset(myMember?.amount ?? 0, vault.token)} {vault.token}
-                  </button>
+                  <div className="flex flex-col gap-3">
+                    {vault.isZk && (
+                      <div className="bg-surface-deep border border-edge rounded-sm p-3 flex flex-col gap-2">
+                        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Proof System</div>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => { setUltraHonkProof(""); setUltraHonkPubInputs(""); }}
+                            className={cn("flex-1 p-2 border rounded-sm font-mono text-[10px] uppercase tracking-[0.15em] transition-colors",
+                              !ultraHonkProof ? "border-amber-core bg-amber-core/5 text-foreground" : "border-edge text-muted-foreground")}>
+                            SHA-256 (auto)
+                          </button>
+                          <button type="button" onClick={() => setUltraHonkProof(" ")}
+                            className={cn("flex-1 p-2 border rounded-sm font-mono text-[10px] uppercase tracking-[0.15em] transition-colors",
+                              ultraHonkProof ? "border-amber-core bg-amber-core/5 text-foreground" : "border-edge text-muted-foreground")}>
+                            UltraHONK SNARK
+                          </button>
+                        </div>
+                        {ultraHonkProof && (
+                          <div className="flex flex-col gap-2 pt-2 border-t border-edge">
+                            <input value={ultraHonkProof} onChange={e => setUltraHonkProof(e.target.value)}
+                              placeholder="Proof bytes hex"
+                              className="w-full bg-surface-sunken border border-edge px-2 py-1 font-mono text-[10px] text-foreground rounded-sm outline-none focus:border-amber-core" />
+                            <input value={ultraHonkPubInputs} onChange={e => setUltraHonkPubInputs(e.target.value)}
+                              placeholder="Public inputs hex"
+                              className="w-full bg-surface-sunken border border-edge px-2 py-1 font-mono text-[10px] text-foreground rounded-sm outline-none focus:border-amber-core" />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setConfirmAction("deposit")}
+                      className="w-full bg-amber-core text-primary-foreground font-mono text-sm uppercase tracking-[0.18em] px-6 py-4 rounded-sm hover:shadow-amber-glow transition-shadow flex items-center justify-center gap-3"
+                    >
+                      ✦ Deposit {formatAsset(myMember?.amount ?? 0, vault.token)} {vault.token}
+                    </button>
+                  </div>
                 )}
               </div>
             )}

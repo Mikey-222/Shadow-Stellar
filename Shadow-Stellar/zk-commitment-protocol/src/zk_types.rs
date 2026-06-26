@@ -1,6 +1,6 @@
 //! ZK proof structs and enums — all are #[contracttype] for on-chain use.
 
-use soroban_sdk::{contracttype, contracterror, BytesN};
+use soroban_sdk::{contracttype, contracterror, Bytes, BytesN};
 
 /// Pedersen-style commitment: SHA-256(DOMAIN || amount_le || blinding_r)
 pub type Commitment = BytesN<32>;
@@ -27,9 +27,12 @@ pub struct ZkVaultEntry {
 /// A zero-knowledge deposit proof.
 ///
 /// Proves:
-///   1. `commitment = H(DOMAIN_COMMIT || amount || blinding_r)`  (opening)
-///   2. `range_tag  = H(DOMAIN_RANGE  || commitment || amount || max)` (range)
-///   3. `nullifier  = H(DOMAIN_NULL   || vault_id   || blinding_r)`  (anti-replay)
+///   1. `commitment = amount * G + r * H`  (BN254 Pedersen, opening)
+///   2. `range_tag  = H(DOMAIN_RANGE  || commitment || amount || 1 || max)` (range)
+///   3. `nullifier  = H(DOMAIN_NULL   || vault_id   || commitment)`  (anti-replay)
+///
+/// The blinding factor `r` is NOT submitted at deposit time — it is kept
+/// secret for deposit-time privacy and revealed only during withdrawal.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ZkDepositProof {
@@ -40,21 +43,23 @@ pub struct ZkDepositProof {
     /// Vault-scoped nullifier.
     pub nullifier: BytesN<32>,
     /// Plaintext amount (verified on-chain then only the commitment is stored).
+    /// The blinding factor is NOT included — it's kept secret for privacy.
     pub amount: i128,
-    /// Blinding factor used to create `commitment`.
-    pub blinding_r: Blinding,
 }
 
 /// A zero-knowledge withdrawal proof.
 ///
 /// Proves knowledge of the blinding factor used to create the stored commitment.
 /// The verifier re-derives the commitment and matches it to the stored one.
+/// The blinding factor is revealed at withdrawal time, which is when the
+/// token transfer happens anyway — there's no additional privacy loss.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ZkWithdrawProof {
     /// The nullifier that was stored at deposit time.
     pub nullifier: BytesN<32>,
     /// Blinding factor — proves knowledge of the commitment preimage.
+    /// Revealed here (at withdrawal) to prove ownership.
     pub blinding_r: Blinding,
     /// The amount to withdraw (must match stored amount under commitment).
     pub amount: i128,
@@ -79,6 +84,37 @@ pub struct ZkRangeProof {
     pub max_value: i128,
     /// Blinding factor.
     pub blinding_r: Blinding,
+}
+
+/// UltraHonk deposit proof — replaces hash-based proofs with real zk-SNARK.
+///
+/// The `proof_bytes` field contains the 14,592-byte UltraHonk proof. The
+/// contract forwards it to `shadow-zk-verifier` for on-chain verification.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct UltraHonkDepositProof {
+    /// Commitment to (secret, recipient, amount).
+    pub commitment: Commitment,
+    /// The UltraHonk proof bytes (14,592 bytes).
+    pub proof_bytes: Bytes,
+    /// Public inputs encoded as 32-byte field elements.
+    pub public_inputs: Bytes,
+    /// Plaintext amount (verified by proof then stored).
+    pub amount: i128,
+}
+
+/// UltraHonk withdrawal proof.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct UltraHonkWithdrawProof {
+    /// The UltraHonk proof bytes.
+    pub proof_bytes: Bytes,
+    /// Public inputs: [commitment, amount] as field elements.
+    pub public_inputs: Bytes,
+    /// Amount to withdraw.
+    pub amount: i128,
+    /// The nullifier stored at deposit time.
+    pub nullifier: BytesN<32>,
 }
 
 /// Error codes specific to the ZK contract.
@@ -107,4 +143,8 @@ pub enum ZkError {
     AmountMismatch       = 14,
     /// Amount must be > 0.
     InvalidAmount        = 15,
+    /// UltraHonk verifier not set.
+    VerifierNotSet       = 16,
+    /// UltraHonk proof verification failed.
+    UltraHonkProofFailed = 17,
 }

@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, BytesN, Env, Vec};
+use soroban_sdk::{Address, Bytes, BytesN, Env, Vec};
 use crate::{DataKey, GroupVault, MemberRecord, MemberState, ZkMemberRecord, ZkGroupVault};
 
 pub const LEDGER_BUMP_AMOUNT: u32 = 535_000;
@@ -164,6 +164,22 @@ pub fn find_slot_by_commitment(
     None
 }
 
+/// Find the next undeposited slot for UltraHonk deposit.
+pub fn find_next_undeposited_slot(
+    env: &Env,
+    vault_id: u64,
+    member_count: u32,
+) -> Option<u32> {
+    for slot in 0..member_count {
+        if let Some(record) = get_zk_member_record(env, vault_id, slot) {
+            if record.state == MemberState::Committed {
+                return Some(slot);
+            }
+        }
+    }
+    None
+}
+
 /// Count ZK member slots eligible to claim pool (Active or Withdrawn).
 pub fn count_zk_claimable_members(env: &Env, vault_id: u64, member_count: u32) -> u32 {
     let mut count: u32 = 0;
@@ -175,4 +191,29 @@ pub fn count_zk_claimable_members(env: &Env, vault_id: u64, member_count: u32) -
         }
     }
     count
+}
+
+// ── UltraHonk Verifier Address ─────────────────────────────────────────────────
+
+/// Get the UltraHonk verifier contract address.
+pub fn get_verifier_address(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::VerifierAddress)
+}
+
+/// Set the UltraHonk verifier contract address.
+pub fn set_verifier_address(env: &Env, verifier: &Address) {
+    env.storage().instance().set(&DataKey::VerifierAddress, verifier);
+}
+
+// ── UltraHonk Verification Key ────────────────────────────────────────────────
+
+/// Get the embedded UltraHonk verification key bytes (if set).
+pub fn get_verification_key(env: &Env) -> Option<Bytes> {
+    env.storage().instance().get(&DataKey::VerificationKey)
+}
+
+/// Set the embedded UltraHonk verification key bytes.
+/// When set, proof verification uses the embedded verifier (no cross-contract).
+pub fn set_verification_key(env: &Env, vk_bytes: &Bytes) {
+    env.storage().instance().set(&DataKey::VerificationKey, vk_bytes);
 }

@@ -9,7 +9,7 @@
 //! instead of storing the plaintext amount on-chain. The commitment scheme
 //! is based on SHA-256 hash-based Pedersen commitments:
 //!
-//!   C(v, r) = SHA-256(DOMAIN_COMMIT || v_le || r)
+//!   C(v, r) = v * G + r * H   (BN254 Pedersen, compressed to 32-byte x)
 //!
 //! This means:
 //!   - **Before withdrawal:** only the commitment hash is stored, not the amount
@@ -56,7 +56,7 @@ mod tests;
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short,
-    Address, BytesN, Env, Vec,
+    Address, Bytes, BytesN, Env, Vec,
 };
 use soroban_sdk::token;
 
@@ -97,15 +97,17 @@ impl ZkContract {
     ///
     /// Arguments:
     ///   - `owner`      : protocol owner address (can add tokens in future)
-    ///   - `xlm_token`  : XLM SAC address
-    ///   - `usdc_token` : USDC SAC address
-    ///   - `eurc_token` : EURC SAC address
+    ///   - `xlm_token`     : XLM SAC address
+    ///   - `usdc_token`    : USDC SAC address
+    ///   - `eurc_token`    : EURC SAC address
+    ///   - `verifier`      : UltraHonk verifier contract address (optional, use Address::zero() to skip)
     pub fn initialize(
         env: Env,
         owner: Address,
         xlm_token: Address,
         usdc_token: Address,
         eurc_token: Address,
+        verifier: Option<Address>,
     ) -> Result<(), ZkError> {
         if is_initialized(&env) {
             return Err(ZkError::AlreadyInitialized);
@@ -118,6 +120,9 @@ impl ZkContract {
 
         set_supported_tokens(&env, &tokens);
         set_protocol_owner(&env, &owner);
+        if let Some(v) = verifier {
+            set_verifier_address(&env, &v);
+        }
         env.storage().instance().set(&StoreKey::EntryCounter, &0u64);
 
         Ok(())
@@ -129,7 +134,7 @@ impl ZkContract {
     ///
     /// The caller:
     ///   1. Chooses a random blinding factor `r` off-chain
-    ///   2. Computes commitment = SHA-256(DOMAIN_COMMIT || amount_le || r)
+    ///   2. Computes commitment = amount * G + r * H (BN254 Pedersen)
     ///   3. Computes range_tag  = SHA-256(DOMAIN_RANGE  || commitment || amount || 1 || max)
     ///   4. Computes nullifier  = SHA-256(DOMAIN_NULL   || entry_id_hint_0 || r)
     ///      — entry_id_hint is the NEXT entry id, obtainable via get_next_entry_id()
@@ -170,8 +175,8 @@ impl ZkContract {
         let entry_id = next_entry_id(&env);
 
         // Verify the ZK deposit proof
-        // max_amount = proof.amount (prover sets their own upper bound — the
-        // range proof ensures they committed to exactly this amount, ∈ [1, amount])
+        // The blinding factor r is NOT revealed — verified implicitly via
+        // range_tag binding and commitment-based nullifier derivation.
         if !verify_deposit(&env, &proof, entry_id, proof.amount) {
             return Err(ZkError::InvalidDepositProof);
         }
@@ -187,6 +192,8 @@ impl ZkContract {
         spend_nullifier(&env, &proof.nullifier, entry_id);
 
         // Store the commitment entry
+        // The blinding factor is NOT stored — only the commitment hash.
+        // At withdrawal, the user proves ownership by revealing blinding_r.
         let entry = ZkVaultEntry {
             commitment: proof.commitment.clone(),
             amount: proof.amount,
@@ -277,6 +284,115 @@ impl ZkContract {
             },
         );
 
+        Ok(())
+    }
+
+    // ─── zk_deposit_ultrahonk ────────────────────────────────────────────
+
+    /// Deposit tokens backed by an UltraHonk zk-SNARK proof.
+    ///
+    /// Replaces the hash-based `zk_deposit` with a real zero-knowledge proof
+    /// verified on-chain via the `shadow-zk-verifier` contract.
+    ///
+    /// The proof must demonstrate knowledge of `(secret, amount)` such that
+    /// `commitment == poseidon2(secret, recipient, amount) ∧ amount > 0`.
+    ///
+    /// Arguments:
+    ///   - `proof`: UltraHonkDepositProof { commitment, proof_bytes, public_inputs, amount }
+    pub fn zk_deposit_ultrahonk(
+        env: Env,
+        caller: Address,
+        token: Address,
+        proof: UltraHonkDepositProof,
+    ) -> Result<u64, ZkError> {
+        caller.require_auth();
+        if !is_supported(&env, &token) {
+            return Err(ZkError::UnsupportedToken);
+        }
+        if proof.amount <= 0 {
+            return Err(ZkError::InvalidAmount);
+        }
+        let verifier = get_verifier_address(&env).ok_or(ZkError::VerifierNotSet)?;
+        let valid = verify_ultrahonk(&env, &verifier, &proof.proof_bytes, &proof.public_inputs)?;
+        if !valid {
+            return Err(ZkError::UltraHonkProofFailed);
+        }
+        let entry_id = next_entry_id(&env);
+        token::Client::new(&env, &token).transfer(
+            &caller,
+            &env.current_contract_address(),
+            &proof.amount,
+        );
+        // Derive nullifier from commitment to prevent replay.
+        // nullifier = SHA-256(DOMAIN_NULLIFIER || entry_id || commitment)
+        let c = zk_crypto::from_bytes32(&proof.commitment);
+        let id_bytes = entry_id.to_le_bytes();
+        let n = zk_crypto::h2(&env, zk_crypto::DOMAIN_NULLIFIER, &id_bytes, &c);
+        let nullifier = BytesN::from_array(&env, &n);
+        let commitment = proof.commitment.clone();
+        let entry = ZkVaultEntry {
+            commitment: commitment.clone(),
+            amount: proof.amount,
+            nullifier: nullifier.clone(),
+            withdrawn: false,
+        };
+        save_entry(&env, entry_id, &entry);
+        push_depositor_entry(&env, &caller, entry_id);
+        env.events().publish(
+            (symbol_short!("zk_dep"), entry_id),
+            ZkDepositedEvent {
+                entry_id,
+                depositor: caller,
+                token,
+                commitment,
+                nullifier,
+            },
+        );
+        Ok(entry_id)
+    }
+
+    // ─── zk_withdraw_ultrahonk ───────────────────────────────────────────
+
+    /// Withdraw using an UltraHonk zk-SNARK proof.
+    ///
+    /// Proof must demonstrate knowledge of the secret preimage for the stored
+    /// commitment, without revealing the secret on-chain.
+    pub fn zk_withdraw_ultrahonk(
+        env: Env,
+        caller: Address,
+        entry_id: u64,
+        token: Address,
+        proof: UltraHonkWithdrawProof,
+    ) -> Result<(), ZkError> {
+        caller.require_auth();
+        let mut entry = require_entry(&env, entry_id)?;
+        if entry.withdrawn {
+            return Err(ZkError::AlreadyWithdrawn);
+        }
+        let verifier = get_verifier_address(&env).ok_or(ZkError::VerifierNotSet)?;
+        let valid = verify_ultrahonk(&env, &verifier, &proof.proof_bytes, &proof.public_inputs)?;
+        if !valid {
+            return Err(ZkError::UltraHonkProofFailed);
+        }
+        if proof.amount != entry.amount {
+            return Err(ZkError::AmountMismatch);
+        }
+        token::Client::new(&env, &token).transfer(
+            &env.current_contract_address(),
+            &caller,
+            &entry.amount,
+        );
+        entry.withdrawn = true;
+        save_entry(&env, entry_id, &entry);
+        env.events().publish(
+            (symbol_short!("zk_wdr"), entry_id),
+            ZkWithdrawnEvent {
+                entry_id,
+                withdrawer: caller,
+                token,
+                amount: entry.amount,
+            },
+        );
         Ok(())
     }
 

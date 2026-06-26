@@ -34,6 +34,13 @@ pub enum DataKey {
     /// Key: (vault_id, nullifier_bytes)
     /// Value: ZkMemberRecord
     ZkDepositRecord(u64, BytesN<32>),
+
+    /// UltraHonk verifier contract address (set at init).
+    VerifierAddress,
+
+    /// Embedded UltraHonk verification key bytes (set at init).
+    /// When set, the embedded verifier is used instead of cross-contract.
+    VerificationKey,
 }
 
 #[contracterror]
@@ -89,4 +96,10 @@ pub enum CcpError {
 
     /// ZK member slot not found in privacy vault
     ZkMemberSlotNotFound     = 56,
+
+    /// UltraHonk verifier address not configured
+    VerifierNotSet           = 60,
+
+    /// UltraHonk zk-SNARK proof verification failed
+    UltraHonkProofFailed     = 61,
 }

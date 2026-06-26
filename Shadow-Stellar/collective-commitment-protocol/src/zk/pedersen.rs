@@ -1,45 +1,26 @@
-//! # Pedersen Commitment Scheme
+//! # Pedersen Commitment Scheme (BN254)
 //!
 //! Implements perfectly-hiding, computationally-binding Pedersen commitments
-//! over our field Fp.
+//! over the BN254 elliptic curve (alt_bn128) using Soroban's native BN254
+//! host functions (Protocol 25+/26+).
 //!
 //! ## Scheme
 //!
-//! We work in a cyclic group of prime order p (the Ed25519 scalar field).
-//! We represent group elements abstractly as field scalars using the
-//! discrete-log relation hidden behind our generator constants.
+//!   C(v, r) = v * G + r * H
 //!
-//! For the Soroban WASM environment (no heap, no_std), we use a
-//! **hash-based commitment** that provides the same security properties
-//! as standard Pedersen commitments:
+//! where G, H are independent BN254 G1 generators with unknown discrete-log
+//! relationship. The commitment is compressed to 32 bytes (the x-coordinate
+//! of the resulting G1 point).
 //!
-//!   C(v, r) = H(v || r)   where H is a domain-separated BLAKE2b-256 hash
-//!
-//! This is a standard technique when elliptic-curve group operations are
-//! not available in the target VM.  It satisfies:
-//! - **Perfectly hiding**: C reveals nothing about v given random r
-//! - **Computationally binding**: finding v' ≠ v with C(v,r) = C(v',r') 
-//!   requires breaking the hash function
-//!
-//! ## Usage
-//!
-//! Off-chain:
-//!   1. Choose random blinding factor `r` (32 bytes)
-//!   2. Compute `commitment = commit(amount, r)`
-//!   3. Store commitment on-chain; keep `(amount, r)` off-chain as witness
-//!
-//! On-chain verification:
-//!   - `verify_commitment(commitment, amount, r)` → bool
-//!   - Used in `deposit_zk` to verify amount without revealing it on-chain
+//! Uses `env.crypto().bn254().g1_msm()` for the multi-scalar multiplication.
 //!
 //! ## Domain separation
 //!
-//! All hashes are prefixed with a domain tag to prevent cross-protocol attacks.
-
-use soroban_sdk::{Bytes, BytesN, Env};
-
-/// Domain separation tag for Pedersen-style commitments.
-pub const DOMAIN_COMMIT: &[u8] = b"shadow-stellar:v1:commit";
+//! Range tags and nullifiers still use SHA-256 (unchanged).
+use soroban_sdk::{
+    crypto::bn254::{Bn254Fr, Bn254G1Affine},
+    vec, Bytes, BytesN, Env, Vec,
+};
 
 /// Domain separation tag for range-proof hash.
 pub const DOMAIN_RANGE: &[u8] = b"shadow-stellar:v1:range";
@@ -47,30 +28,16 @@ pub const DOMAIN_RANGE: &[u8] = b"shadow-stellar:v1:range";
 /// Domain separation tag for nullifier hash.
 pub const DOMAIN_NULLIFIER: &[u8] = b"shadow-stellar:v1:nullifier";
 
-/// Domain separation tag for Schnorr proofs.
+/// Domain separation tag for Schnorr proofs (reserved, not currently used).
 pub const DOMAIN_SCHNORR: &[u8] = b"shadow-stellar:v1:schnorr";
 
-/// A 32-byte Pedersen commitment (binding hash of value + blinding factor).
-pub type Commitment = [u8; 32];
-
-/// A 32-byte blinding factor (randomness chosen by the committer).
-pub type BlindingFactor = [u8; 32];
-
-// ── Hash primitive (BLAKE2b-256 substitute using Soroban env) ─────────────────
-//
-// Soroban does NOT expose a native hash function beyond SHA-256 via
-// `env.crypto().sha256()`.  We use SHA-256 with domain separation.
-// The binding property holds under SHA-256's collision resistance.
+// ── SHA-256 helpers (for range tags and nullifiers) ──────────────────────────
 
 /// Compute SHA-256( domain || data ) using the Soroban crypto primitive.
 pub fn sha256_domain(env: &Env, domain: &[u8], data: &[u8]) -> [u8; 32] {
     let mut buf = Bytes::new(env);
-    for b in domain {
-        buf.push_back(*b);
-    }
-    for b in data {
-        buf.push_back(*b);
-    }
+    for b in domain { buf.push_back(*b); }
+    for b in data  { buf.push_back(*b); }
     env.crypto().sha256(&buf).to_array()
 }
 
@@ -93,17 +60,82 @@ pub fn sha256_domain3(env: &Env, domain: &[u8], d1: &[u8], d2: &[u8], d3: &[u8])
     env.crypto().sha256(&buf).to_array()
 }
 
+/// A 32-byte Pedersen commitment (x-coordinate of BN254 G1 point).
+pub type Commitment = [u8; 32];
+
+/// A 32-byte blinding factor (randomness chosen by the committer).
+pub type BlindingFactor = [u8; 32];
+
+// ── BN254 G1 generator constants ─────────────────────────────────────────────
+//
+// G = (1, 2)   — standard BN254 generator (alt_bn128 G1 generator)
+// H = (2, y)   — NUMS point with no known DL from G; y computed from y² = x³ + 3
+
+const G_X: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+];
+const G_Y: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+];
+
+const H_X: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+];
+const H_Y: [u8; 32] = [
+    0x23, 0x81, 0x8c, 0xde, 0x28, 0xcf, 0x4e, 0xa9,
+    0x53, 0xfe, 0x59, 0xb1, 0xc3, 0x77, 0xfa, 0xfd,
+    0x46, 0x10, 0x39, 0xc1, 0x72, 0x51, 0xff, 0x43,
+    0x77, 0x31, 0x3d, 0xa6, 0x4a, 0xd0, 0x7e, 0x13,
+];
+
+fn g1_generator(env: &Env) -> Bn254G1Affine {
+    let mut bytes = [0u8; 64];
+    bytes[..32].copy_from_slice(&G_X);
+    bytes[32..].copy_from_slice(&G_Y);
+    Bn254G1Affine::from_array(env, &bytes)
+}
+
+fn h_generator(env: &Env) -> Bn254G1Affine {
+    let mut bytes = [0u8; 64];
+    bytes[..32].copy_from_slice(&H_X);
+    bytes[32..].copy_from_slice(&H_Y);
+    Bn254G1Affine::from_array(env, &bytes)
+}
+
 // ── Core commitment functions ─────────────────────────────────────────────────
 
-/// Create a Pedersen-style commitment to `amount` with blinding factor `r`.
+/// Create a BN254 Pedersen commitment to `amount` with blinding factor `r`.
 ///
-/// C = SHA-256( DOMAIN_COMMIT || little_endian(amount) || r )
+/// C = amount * G + r * H   (compressed to 32-byte x-coordinate)
+///
+/// Uses `env.crypto().bn254().g1_msm()` for the multi-scalar multiplication.
 ///
 /// This is computed **off-chain** and submitted to the contract.
 /// The on-chain verifier calls `verify_commitment` to check it.
 pub fn commit(env: &Env, amount: i128, r: &BlindingFactor) -> Commitment {
-    let amount_bytes = amount.to_le_bytes();
-    sha256_domain2(env, DOMAIN_COMMIT, &amount_bytes, r)
+    let g = g1_generator(env);
+    let h = h_generator(env);
+
+    // Convert amount (i128) to Bn254Fr (big-endian scalar)
+    let amount_fr = i128_to_bn254_fr(env, amount);
+
+    // Convert blinding factor r to Bn254Fr (big-endian scalar)
+    let r_bytesn = BytesN::<32>::from_array(env, r);
+    let r_fr = Bn254Fr::from_bytes(r_bytesn);
+
+    // C = amount * G + r * H
+    let points = vec![&env, g, h];
+    let scalars = vec![&env, amount_fr, r_fr];
+    let point = env.crypto().bn254().g1_msm(points, scalars);
+
+    // Return x-coordinate (first 32 bytes) as compressed commitment
+    let point_bytes = point.to_array();
+    let mut commitment = [0u8; 32];
+    commitment.copy_from_slice(&point_bytes[..32]);
+    commitment
 }
 
 /// Verify that a commitment opens correctly.
@@ -111,23 +143,34 @@ pub fn commit(env: &Env, amount: i128, r: &BlindingFactor) -> Commitment {
 /// Returns `true` iff `C == commit(amount, r)`.
 pub fn verify_commitment(env: &Env, commitment: &Commitment, amount: i128, r: &BlindingFactor) -> bool {
     let expected = commit(env, amount, r);
-    // Constant-time compare
     ct_eq_32(&expected, commitment)
 }
 
-// ── Nullifier ─────────────────────────────────────────────────────────────────
-
-/// Compute a nullifier for a (vault_id, member_secret) pair.
-///
-/// A nullifier allows proving "I deposited into vault X" without revealing
-/// which address performed the deposit.  The contract stores nullifiers and
-/// rejects duplicates, preventing double-spending.
-///
-/// nullifier = SHA-256( DOMAIN_NULLIFIER || vault_id_le || member_secret )
-pub fn compute_nullifier(env: &Env, vault_id: u64, member_secret: &[u8; 32]) -> [u8; 32] {
-    let vault_id_bytes = vault_id.to_le_bytes();
-    sha256_domain2(env, DOMAIN_NULLIFIER, &vault_id_bytes, member_secret)
+/// Convert an i128 to Bn254Fr (big-endian 32-byte scalar).
+fn i128_to_bn254_fr(env: &Env, value: i128) -> Bn254Fr {
+    let le = value.to_le_bytes();           // 16 bytes, little-endian
+    let mut be32 = [0u8; 32];               // zero-padded 32 bytes
+    for i in 0..16 {
+        be32[31 - i] = le[i];              // reverse LE to BE
+    }
+    let bytesn = BytesN::<32>::from_array(env, &be32);
+    Bn254Fr::from_bytes(bytesn)
 }
+
+// ── Nullifier ─────────────────────────────────────────────────────────────────
+//
+// Nullifiers are computed off-chain as:
+//   nullifier = SHA-256(DOMAIN_NULLIFIER || vault_id_le || commitment)
+//
+// The contract verifies this derivation in verify_deposit_proof using the
+// commitment (which is submitted at deposit time). The blinding factor r
+// is NOT needed for nullifier derivation — the commitment already binds r.
+//
+// This design means:
+//   - blinding factor r is NOT revealed at deposit time (privacy)
+//   - r IS revealed at withdrawal time to prove ownership
+//   - The nullifier is deterministic from (vault_id, commitment), ensuring
+//     each deposit has a unique nullifier (different r → different commitment)
 
 // ── Range commitment (for proving amount is positive) ─────────────────────────
 

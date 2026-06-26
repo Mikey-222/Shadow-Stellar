@@ -352,8 +352,8 @@ function Dashboard() {
           <div className="p-5 grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
               { label: "Time-Locked Vault", id: "CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H" },
-              { label: "CCP + ZK Contract", id: "CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ" },
-              { label: "ZK Commitment Protocol", id: "CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525" },
+              { label: "CCP + ZK Contract", id: "CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ" },
+              { label: "ZK Commitment Protocol", id: "CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI" },
             ].map(({ label, id }) => (
               <div key={id} className="flex flex-col gap-1">
                 <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{label}</div>

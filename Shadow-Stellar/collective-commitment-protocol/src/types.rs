@@ -70,12 +70,12 @@ pub struct GroupVault {
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct ZkMemberRecord {
-    /// Commitment to the member's identity secret:
-    ///   member_commitment = SHA-256(DOMAIN_COMMIT || member_secret)
+    /// Commitment to the member's identity secret (BN254 Pedersen):
+    ///   member_commitment = secret * G + r * H
     pub member_commitment: BytesN<32>,
 
-    /// Commitment to the deposited amount (set after deposit):
-    ///   amount_commitment = SHA-256(DOMAIN_COMMIT || amount || blinding_r)
+    /// Commitment to the deposited amount (set after deposit, BN254 Pedersen):
+    ///   amount_commitment = amount * G + r * H
     /// Zero before deposit.
     pub amount_commitment: BytesN<32>,
 

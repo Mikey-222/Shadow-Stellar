@@ -48,7 +48,7 @@
 //! ## Off-Chain Prover Workflow
 //!
 //! 1. Pick random `r ∈ [0, 2^256)` (blinding factor)
-//! 2. Compute `commitment = SHA-256(DOMAIN_COMMIT || amount_le || r)`
+//! 2. Compute `commitment = amount * G + r * H`  (BN254 Pedersen, compress x)
 //! 3. Compute `range_tag = SHA-256(DOMAIN_RANGE || commitment || amount || max)`
 //! 4. Compute `nullifier = SHA-256(DOMAIN_NULLIFIER || vault_id_le || r)`
 //! 5. Pack into `ZkDepositProof` and submit to `deposit_zk`
@@ -66,12 +66,13 @@ pub mod verifier;
 
 // Re-export most-used types for ergonomic use in lib.rs
 pub use pedersen::{
-    commit, verify_commitment, verify_range_tag, compute_nullifier,
-    compute_range_tag, bytes32_to_soroban, soroban_to_bytes32,
-    DOMAIN_COMMIT, DOMAIN_NULLIFIER, DOMAIN_RANGE, DOMAIN_SCHNORR,
+    commit, verify_commitment, verify_range_tag,
+    compute_range_tag, sha256_domain2, sha256_domain,
+    bytes32_to_soroban, soroban_to_bytes32,
+    DOMAIN_NULLIFIER, DOMAIN_RANGE,
 };
-pub use proof::{ZkDepositProof, ZkEarlyExitProof, ZkMembershipProof, ZkProof, SchnorrProof};
+pub use proof::{ZkDepositProof, ZkEarlyExitProof, ZkProof, ZkWithdrawProof};
 pub use verifier::{
-    verify_deposit_proof, verify_early_exit_proof, verify_membership_proof,
-    verify_schnorr_proof, check_nullifier,
+    verify_deposit_proof, verify_early_exit_proof,
+    verify_withdraw_proof, verify_ultrahonk,
 };

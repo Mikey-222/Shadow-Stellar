@@ -1,30 +1,69 @@
-//! # ZK Cryptographic Primitives
+//! # ZK Cryptographic Primitives (BN254)
 //!
-//! Hash-based commitment scheme using Soroban's SHA-256 primitive.
-//! All functions are pure (no side effects) and run inside `#![no_std]`.
+//! Pedersen commitment scheme over the BN254 elliptic curve (alt_bn128) using
+//! Soroban's native BN254 host functions (Protocol 25+/26+).
 //!
 //! ## Commitment Scheme
 //!
-//!   C(v, r) = SHA-256(DOMAIN_COMMIT || little_endian_16(v) || r)
+//!   C(v, r) = v * G + r * H
 //!
-//! - **Hiding:**  perfect — C leaks nothing about v for random r
-//! - **Binding:** computational — SHA-256 collision resistance
+//! where G, H are independent BN254 G1 generators with unknown discrete-log
+//! relationship. The commitment is compressed to 32 bytes (the x-coordinate
+//! of the resulting G1 point).
 //!
-//! ## Domain tags
-//!
-//! Every hash is prefixed with a context string to prevent cross-protocol
-//! attacks and cross-domain commitment reuse.
+//! Range tags and nullifiers still use SHA-256 (unchanged).
 
-use soroban_sdk::{Bytes, BytesN, Env};
+use soroban_sdk::{
+    crypto::bn254::{Bn254Fr, Bn254G1Affine},
+    vec, Bytes, BytesN, Env, Vec,
+};
 
-// ── Domain separation tags ────────────────────────────────────────────────────
+// ── Domain separation tags (for hash-based primitives) ────────────────────────
 
-pub const DOMAIN_COMMIT:    &[u8] = b"zk-stellar:v1:commit";
 pub const DOMAIN_NULLIFIER: &[u8] = b"zk-stellar:v1:nullifier";
 pub const DOMAIN_RANGE:     &[u8] = b"zk-stellar:v1:range";
 pub const DOMAIN_VERIFY:    &[u8] = b"zk-stellar:v1:verify";
 
-// ── SHA-256 helpers ───────────────────────────────────────────────────────────
+// ── BN254 G1 generator constants ─────────────────────────────────────────────
+//
+// G = (1, 2)   — standard BN254 generator (alt_bn128 G1 generator)
+// H = (2, y)   — NUMS point with no known DL from G; y computed from y² = x³ + 3
+
+const G_X: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+];
+const G_Y: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+];
+
+const H_X: [u8; 32] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+];
+const H_Y: [u8; 32] = [
+    0x23, 0x81, 0x8c, 0xde, 0x28, 0xcf, 0x4e, 0xa9,
+    0x53, 0xfe, 0x59, 0xb1, 0xc3, 0x77, 0xfa, 0xfd,
+    0x46, 0x10, 0x39, 0xc1, 0x72, 0x51, 0xff, 0x43,
+    0x77, 0x31, 0x3d, 0xa6, 0x4a, 0xd0, 0x7e, 0x13,
+];
+
+fn g1_generator(env: &Env) -> Bn254G1Affine {
+    let mut bytes = [0u8; 64];
+    bytes[..32].copy_from_slice(&G_X);
+    bytes[32..].copy_from_slice(&G_Y);
+    Bn254G1Affine::from_array(env, &bytes)
+}
+
+fn h_generator(env: &Env) -> Bn254G1Affine {
+    let mut bytes = [0u8; 64];
+    bytes[..32].copy_from_slice(&H_X);
+    bytes[32..].copy_from_slice(&H_Y);
+    Bn254G1Affine::from_array(env, &bytes)
+}
+
+// ── SHA-256 helpers (for range tags and nullifiers) ───────────────────────────
 
 /// SHA-256(domain || data)
 pub fn h1(env: &Env, domain: &[u8], data: &[u8]) -> [u8; 32] {
@@ -63,12 +102,34 @@ pub fn ct_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     acc == 0
 }
 
-// ── Commitment ────────────────────────────────────────────────────────────────
+// ── Commitment (BN254 Pedersen) ──────────────────────────────────────────────
 
-/// Create a commitment: C = SHA-256(DOMAIN_COMMIT || amount_le || r)
+/// Create a BN254 Pedersen commitment to `amount` with blinding factor `r`.
+///
+/// C = amount * G + r * H   (compressed to 32-byte x-coordinate)
+///
+/// Uses `env.crypto().bn254().g1_msm()` for the multi-scalar multiplication.
 pub fn commit(env: &Env, amount: i128, r: &[u8; 32]) -> [u8; 32] {
-    let amount_bytes = amount.to_le_bytes();
-    h2(env, DOMAIN_COMMIT, &amount_bytes, r)
+    let g = g1_generator(env);
+    let h = h_generator(env);
+
+    // Convert amount (i128) to Bn254Fr (big-endian scalar)
+    let amount_fr = i128_to_bn254_fr(env, amount);
+
+    // Convert blinding factor r to Bn254Fr (big-endian scalar)
+    let r_bytesn = BytesN::<32>::from_array(env, r);
+    let r_fr = Bn254Fr::from_bytes(r_bytesn);
+
+    // C = amount * G + r * H
+    let points = vec![&env, g, h];
+    let scalars = vec![&env, amount_fr, r_fr];
+    let point = env.crypto().bn254().g1_msm(points, scalars);
+
+    // Return x-coordinate (first 32 bytes) as compressed commitment
+    let point_bytes = point.to_array();
+    let mut commitment = [0u8; 32];
+    commitment.copy_from_slice(&point_bytes[..32]);
+    commitment
 }
 
 /// Verify a commitment opens correctly.
@@ -77,24 +138,24 @@ pub fn verify_commit(env: &Env, commitment: &[u8; 32], amount: i128, r: &[u8; 32
     ct_eq(&expected, commitment)
 }
 
+/// Convert an i128 to Bn254Fr (big-endian 32-byte scalar).
+fn i128_to_bn254_fr(env: &Env, value: i128) -> Bn254Fr {
+    let le = value.to_le_bytes();
+    let mut be32 = [0u8; 32];
+    for i in 0..16 {
+        be32[31 - i] = le[i];
+    }
+    let bytesn = BytesN::<32>::from_array(env, &be32);
+    Bn254Fr::from_bytes(bytesn)
+}
+
 // ── Nullifier ─────────────────────────────────────────────────────────────────
-
-/// Compute a vault-scoped nullifier: H(DOMAIN_NULLIFIER || vault_id_le || r)
-pub fn nullifier(env: &Env, vault_id: u64, r: &[u8; 32]) -> [u8; 32] {
-    let vault_bytes = vault_id.to_le_bytes();
-    h2(env, DOMAIN_NULLIFIER, &vault_bytes, r)
-}
-
-/// Verify a nullifier matches the expected derivation.
-pub fn verify_nullifier(
-    env: &Env,
-    vault_id: u64,
-    r: &[u8; 32],
-    supplied: &[u8; 32],
-) -> bool {
-    let expected = nullifier(env, vault_id, r);
-    ct_eq(&expected, supplied)
-}
+//
+// Nullifiers are computed off-chain as:
+//   nullifier = SHA-256(DOMAIN_NULLIFIER || vault_id_le || commitment)
+//
+// The blinding factor r is NOT needed for nullifier derivation — the
+// commitment already binds r. This keeps r secret at deposit time.
 
 // ── Range tag ─────────────────────────────────────────────────────────────────
 

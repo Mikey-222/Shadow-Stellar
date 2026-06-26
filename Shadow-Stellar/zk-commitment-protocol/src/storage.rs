@@ -1,6 +1,6 @@
 //! Storage helpers for the ZK Commitment Protocol.
 
-use soroban_sdk::{Address, BytesN, Env, Vec};
+use soroban_sdk::{Address, Bytes, BytesN, Env, Vec};
 use crate::zk_types::{ZkError, ZkVaultEntry};
 
 pub const LEDGER_BUMP: u32 = 535_000;
@@ -24,6 +24,10 @@ pub enum StoreKey {
     Nullifier(BytesN<32>),
     /// Protocol owner (for admin ops).
     ProtocolOwner,
+    /// UltraHonk verifier contract address.
+    VerifierAddress,
+    /// Embedded UltraHonk verification key bytes.
+    VerificationKey,
 }
 
 // ── Initialization ────────────────────────────────────────────────────────────
@@ -113,4 +117,20 @@ pub fn get_protocol_owner(env: &Env) -> Address {
 
 pub fn set_protocol_owner(env: &Env, owner: &Address) {
     env.storage().instance().set(&StoreKey::ProtocolOwner, owner);
+}
+
+pub fn set_verifier_address(env: &Env, addr: &Address) {
+    env.storage().instance().set(&StoreKey::VerifierAddress, addr);
+}
+
+pub fn get_verifier_address(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&StoreKey::VerifierAddress)
+}
+
+pub fn get_verification_key(env: &Env) -> Option<Bytes> {
+    env.storage().instance().get(&StoreKey::VerificationKey)
+}
+
+pub fn set_verification_key(env: &Env, vk_bytes: &Bytes) {
+    env.storage().instance().set(&StoreKey::VerificationKey, vk_bytes);
 }

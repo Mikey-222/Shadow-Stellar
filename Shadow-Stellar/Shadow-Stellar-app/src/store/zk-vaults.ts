@@ -16,8 +16,10 @@ import { useWalletStore } from "@/store/wallet";
 import {
   buildDepositProof, buildWithdrawProof,
   buildZkDeposit, buildZkWithdraw,
+  buildZkDepositUltraHonk, buildZkWithdrawUltraHonk,
   getZkEntry, getZkEntriesByDepositor, getNextEntryId,
   submitZkTx, fromStroops, toStroops, TOKEN_ADDRESS, toHex,
+  deriveBlindingFactor,
   type ZkEntryOnChain,
 } from "@/lib/zk-contract";
 
@@ -42,6 +44,8 @@ export interface ZkVault {
   name?: string;
   /** ISO timestamp of deposit */
   depositedAt: string;
+  /** Proof system: "sha256" (Pedersen hash) or "ultrahonk" (zk-SNARK) */
+  proofType: "sha256" | "ultrahonk";
 }
 
 export type ZkTxnType = "zk-deposit" | "zk-withdraw";
@@ -64,15 +68,28 @@ interface ZkVaultState {
   /** Fetch all ZK entries for the connected wallet */
   fetchVaults: () => Promise<void>;
 
-  /** Create a ZK deposit — builds proof off-chain, submits on-chain */
+  /** Create a ZK deposit — builds SHA-256 proof off-chain, submits on-chain */
   createZkVault: (input: {
     token: AssetCode;
     amount: number;
     name?: string;
   }) => Promise<ZkVault>;
 
+  /** Create a ZK deposit using an UltraHonk zk-SNARK proof */
+  createZkVaultUltraHonk: (input: {
+    token: AssetCode;
+    amount: number;
+    commitment: string;
+    proofBytes: string;
+    publicInputs: string;
+    name?: string;
+  }) => Promise<ZkVault>;
+
   /** Withdraw a ZK vault entry using stored blinding factor */
   withdrawZkVault: (entryId: string) => Promise<void>;
+
+  /** Withdraw a ZK vault entry using an UltraHonk proof */
+  withdrawZkVaultUltraHonk: (entryId: string, proofBytes: string, publicInputs: string) => Promise<void>;
 
   reset: () => void;
 }
@@ -118,6 +135,7 @@ export const useZkVaultStore = create<ZkVaultState>()(
               withdrawn:   onChain.withdrawn,
               name:        local?.name,
               depositedAt: local?.depositedAt ?? new Date().toISOString(),
+              proofType:   local?.proofType ?? "sha256",
             });
           }
 
@@ -141,9 +159,11 @@ export const useZkVaultStore = create<ZkVaultState>()(
         // 1. Get the next entry_id for correct nullifier domain
         const entryId = await getNextEntryId();
 
-        // 2. Build the ZK proof off-chain using Web Crypto
+        // 2. Derive blinding factor deterministically from wallet + entry_id.
+        //    This prevents permanent fund loss on localStorage clear.
         const amountStroops = toStroops(amount);
-        const { proof, blinding } = await buildDepositProof(amountStroops, entryId);
+        const blinding = await deriveBlindingFactor(address, entryId);
+        const { proof } = await buildDepositProof(amountStroops, entryId, blinding);
 
         // 3. Build the transaction
         const txXdr = await buildZkDeposit(address, token, proof);
@@ -173,6 +193,7 @@ export const useZkVaultStore = create<ZkVaultState>()(
           withdrawn:  false,
           name,
           depositedAt: now,
+          proofType: "sha256",
         };
 
         const txn: ZkTransaction = {
@@ -191,6 +212,58 @@ export const useZkVaultStore = create<ZkVaultState>()(
         // Refresh from chain after a short delay
         setTimeout(() => get().fetchVaults(), 4000);
 
+        return vault;
+      },
+
+      createZkVaultUltraHonk: async ({ token, amount, commitment, proofBytes, publicInputs, name }) => {
+        const walletStore = useWalletStore.getState();
+        const address = walletStore.address;
+        if (!address) throw new Error("Wallet not connected");
+
+        const amountStroops = toStroops(amount);
+        const txXdr = await buildZkDepositUltraHonk(address, token, {
+          commitment,
+          proof_bytes: proofBytes,
+          public_inputs: publicInputs,
+          amount: amountStroops,
+        });
+
+        const signedXdr = await walletStore.signTransaction(txXdr);
+        const result = await submitZkTx(signedXdr);
+
+        let assignedId = "0";
+        if (result.status === "SUCCESS" && result.returnValue) {
+          const mod = await import("@stellar/stellar-sdk");
+          const s: any = (mod as any).default ?? mod;
+          assignedId = String(s.scValToNative(result.returnValue) as bigint);
+        }
+
+        const now = new Date().toISOString();
+        const vault: ZkVault = {
+          id: assignedId,
+          token,
+          amount,
+          blinding: "",
+          nullifier: "",
+          commitment,
+          withdrawn: false,
+          name,
+          depositedAt: now,
+          proofType: "ultrahonk",
+        };
+
+        const txn: ZkTransaction = {
+          id: `zkt_${crypto.randomUUID()}`,
+          entryId: assignedId,
+          token,
+          type: "zk-deposit",
+          amount: -amount,
+          at: now,
+        };
+
+        walletStore.adjustBalance(token, -amount);
+        set({ vaults: [vault, ...get().vaults], transactions: [txn, ...get().transactions] });
+        setTimeout(() => get().fetchVaults(), 4000);
         return vault;
       },
 
@@ -228,7 +301,6 @@ export const useZkVaultStore = create<ZkVaultState>()(
           at: now,
         };
 
-        // Optimistically credit balance
         walletStore.adjustBalance(vault.token, vault.amount);
 
         set({
@@ -238,6 +310,51 @@ export const useZkVaultStore = create<ZkVaultState>()(
           transactions: [txn, ...get().transactions],
         });
 
+        setTimeout(() => get().fetchVaults(), 3000);
+      },
+
+      withdrawZkVaultUltraHonk: async (entryId, proofBytes, publicInputs) => {
+        const walletStore = useWalletStore.getState();
+        const address = walletStore.address;
+        if (!address) throw new Error("Wallet not connected");
+
+        const vault = get().vaults.find(v => v.id === entryId);
+        if (!vault) throw new Error("ZK vault entry not found");
+        if (vault.withdrawn) throw new Error("Already withdrawn");
+
+        const amountStroops = toStroops(vault.amount);
+        const txXdr = await buildZkWithdrawUltraHonk(
+          address,
+          BigInt(entryId),
+          vault.token,
+          {
+            proof_bytes: proofBytes,
+            public_inputs: publicInputs,
+            amount: amountStroops,
+            nullifier: vault.nullifier || "00".repeat(32),
+          },
+        );
+
+        const signedXdr = await walletStore.signTransaction(txXdr);
+        await submitZkTx(signedXdr);
+
+        const now = new Date().toISOString();
+        const txn: ZkTransaction = {
+          id: `zkt_${crypto.randomUUID()}`,
+          entryId,
+          token: vault.token,
+          type: "zk-withdraw",
+          amount: vault.amount,
+          at: now,
+        };
+
+        walletStore.adjustBalance(vault.token, vault.amount);
+        set({
+          vaults: get().vaults.map(v =>
+            v.id === entryId ? { ...v, withdrawn: true } : v,
+          ),
+          transactions: [txn, ...get().transactions],
+        });
         setTimeout(() => get().fetchVaults(), 3000);
       },
 

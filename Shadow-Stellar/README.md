@@ -1,10 +1,11 @@
 # Shadow-Stellar
 
-Shadow-Stellar is a zero-knowledge vault protocol on the Stellar blockchain, built with Soroban smart contracts. It combines three independently deployable contracts:
+Shadow-Stellar is a zero-knowledge vault protocol on the Stellar blockchain, built with Soroban smart contracts. It combines four independently deployable contracts:
 
 - **Time-Locked Vault (TLV)** — Solo vaults: lock XLM, USDC, or EURC for a fixed duration with Strict or Penalty lock types.
-- **Collective Commitment Protocol + ZK (CCP)** — Group escrow: 5–100 members collectively lock funds, enforced by a funding deadline, with early-exit penalties redistributed to committed members. Includes a full ZK privacy layer for private group vaults.
-- **ZK Commitment Protocol (ZCP)** — Standalone private vaults: deposit amounts are committed via SHA-256 Pedersen commitments — never stored in plaintext on-chain. Withdrawal requires a zero-knowledge proof of the blinding factor.
+- **Collective Commitment Protocol + ZK (CCP)** — Group escrow: 5–100 members collectively lock funds, enforced by a funding deadline, with early-exit penalties redistributed to committed members. Full ZK privacy layer with BN254 Pedersen commitments (replaced SHA-256 hash-based) and embedded UltraHONK verifier.
+- **ZK Commitment Protocol (ZCP)** — Standalone private vaults: deposit amounts are committed via BN254 Pedersen commitments (`amount·G + blinding·H`) — never stored in plaintext on-chain. Withdrawal requires knowledge of the blinding factor. **Embedded UltraHONK zk-SNARK verification** (UltraHonkVerifier baked into the contract, no cross-contract call) via `zk_deposit_ultrahonk` / `zk_withdraw_ultrahonk`.
+- **Shadow ZK Verifier** — Real zk-SNARK verification contract using UltraHONK (Barretenberg) proved on Stellar's BN254 host functions. Compiled Noir circuits generate proofs off-chain; the contract verifies them on-chain via sumcheck + Shplemini batch-opening + BN254 pairing check.
 
 The frontend (`Shadow-Stellar-app`) is a React 19 + Vite + TanStack Router dApp supporting all three contract types. It supports Freighter, xBull, Albedo, Rabet, Lobstr, and Hana wallets via the Stellar Wallets Kit.
 
@@ -104,8 +105,8 @@ We track contract events using Stellar Expert's built-in event viewer.
 | Contract | Events URL |
 |---|---|
 | Time-Locked Vault v2 | https://stellar.expert/explorer/testnet/contract/CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H/events |
-| CCP + ZK v2 | https://stellar.expert/explorer/testnet/contract/CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ/events |
-| ZK Commitment Protocol | https://stellar.expert/explorer/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525/events |
+| CCP + ZK v3 (SDK 26) | https://stellar.expert/explorer/testnet/contract/CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ/events |
+| ZK Commitment Protocol v3 (SDK 26) | https://stellar.expert/explorer/testnet/contract/CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI/events |
 
 **Security:** [Completed Security Checklist](./Security.md)
 
@@ -181,6 +182,8 @@ payout  = amount - penalty
 | 54 | `VaultIsPrivacyMode` |
 | 55 | `VaultNotPrivacyMode` |
 | 56 | `ZkMemberSlotNotFound` |
+| 60 | `VerifierNotSet` |
+| 61 | `UltraHonkProofFailed` |
 
 ---
 
@@ -265,47 +268,48 @@ A single-user vault that locks XLM, USDC, or EURC for a defined period. Two lock
 
 ---
 
-### 2. Collective Commitment Protocol + ZK Module (CCP) — v2
+### 2. Collective Commitment Protocol + ZK Module (CCP) — v3 (SDK 26)
 
-Multi-user group escrow with enforced participation, funding deadlines, early-exit penalties, community pool redistribution, 5% creator commission, and a full zero-knowledge privacy layer for private group vaults.
+Multi-user group escrow with enforced participation, funding deadlines, early-exit penalties, community pool redistribution, 5% creator commission, and a full zero-knowledge privacy layer for private group vaults. BN254 Pedersen commitments (via `env.crypto().bn254().g1_msm()`); embedded UltraHonk verifier; WASM 105 KB.
 
 | Item | Value |
 |---|---|
-| **Contract** | `CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ` |
-| Explorer | https://stellar.expert/explorer/testnet/contract/CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ |
-| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ |
-| Deploy Tx | `a41f9d039edf34bebf98e02e348bbbf5f4468e0ae9340b8ff0aa8e88aeae527f` |
-| Init Tx | `0856789ff0f451d6f6788654a3098af04c9e67e65ee651d6bb025939be2f3c48` |
+| **Contract** | `CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ` |
+| Explorer | https://stellar.expert/explorer/testnet/contract/CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ |
+| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ |
+| Deploy Tx | `bcbad6706580291f6b4b325f229d091429cc047db299b96bed3f30efdf32113c` |
+| Init Tx | `546f317a0f99506c4bc8461df9925d3aa1040b15527b42874b2a66529ced79d4` |
 
 **Standard Functions:** `create_group_vault` · `deposit` · `withdraw` · `cancel` · `claim_pool` · `get_group_vault` · `get_member_state` · `get_vaults_by_member` · `get_vaults_by_creator` · `get_pool_balance` · `get_member_claim_amount`
 
-**ZK Privacy Functions:** `create_group_vault_zk` · `deposit_zk` · `withdraw_zk` · `claim_pool_zk` · `is_nullifier_spent` · `get_zk_vault` · `get_zk_member_record_fn` · `get_vault_privacy_mode`
+**ZK Privacy Functions:** `create_group_vault_zk` · `deposit_zk` · `withdraw_zk` · `claim_pool_zk` · `deposit_zk_ultrahonk` · `is_nullifier_spent` · `get_zk_vault` · `get_zk_member_record_fn` · `get_vault_privacy_mode`
 
 ---
 
-### 3. ZK Commitment Protocol (ZCP)
+### 3. ZK Commitment Protocol (ZCP) — v3 (SDK 26)
 
-A standalone zero-knowledge vault contract. Users lock XLM, USDC, or EURC backed by a SHA-256 hash-based Pedersen commitment — the deposit amount is never stored in plaintext on-chain. Withdrawal requires submitting a ZK proof of knowledge of the blinding factor. Includes a permanent spent-nullifier registry that prevents replay attacks.
+A standalone zero-knowledge vault contract. Users lock XLM, USDC, or EURC backed by a BN254 Pedersen commitment (`amount·G + blinding·H` compressed to 32-byte x-coordinate) — the deposit amount is never stored in plaintext on-chain. Withdrawal requires submitting the blinding factor; the contract recomputes the commitment from `(amount, blinding)` and verifies it matches the stored value. Includes a permanent spent-nullifier registry that prevents replay attacks. Embedded UltraHonk verifier; WASM 69 KB.
 
 | Item | Value |
 |---|---|
-| **Contract** | `CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525` |
-| Explorer | https://stellar.expert/explorer/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525 |
-| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525 |
-| Deploy Tx | `783c80f0e21cc8bde47c4eb028780d26004b1c34814b48d026ce1b82906ee8e0` |
-| Init Tx | `23222a3c8b3739427dc4acd4a5cc96a908121db43b9890bfb191c2dbde1e68b0` |
+| **Contract** | `CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI` |
+| Explorer | https://stellar.expert/explorer/testnet/contract/CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI |
+| Stellar Lab | https://lab.stellar.org/r/testnet/contract/CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI |
+| Deploy Tx | `64342ad10bbe9f3d2f04e465449f08f817c2b8f495900e9fe445723bb3f576e4` |
+| Init Tx | `2d9741ebc0abf562ac2569f884355392476632a21e126e73e669c82a7071d4ca` |
 
-**Functions:** `zk_deposit` · `zk_withdraw` · `verify_range_proof` · `is_nullifier_spent_fn` · `get_entry_fn` · `get_entries_by_depositor` · `get_commitment` · `get_next_entry_id`
+**Functions:** `zk_deposit` · `zk_withdraw` · `zk_deposit_ultrahonk` · `zk_withdraw_ultrahonk` · `verify_range_proof` · `is_nullifier_spent_fn` · `get_entry_fn` · `get_entries_by_depositor` · `get_commitment` · `get_next_entry_id`
 
 ---
 
 ### Testnet Deployment Summary
 
 | Contract | Address | Status |
-|---|---|---|
+|---|---|---|---|
 | Time-Locked Vault v2 | `CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H` | ✅ Live |
-| CCP + ZK v2 | `CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ` | ✅ Live |
-| ZK Commitment Protocol | `CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525` | ✅ Live |
+| CCP + ZK v3 (SDK 26) | `CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ` | ✅ Live |
+| ZK Commitment Protocol v3 (SDK 26) | `CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI` | ✅ Live |
+| Shadow ZK Verifier | **Embedded** — UltraHonkVerifier integrated into CCP & ZCP | ✅ Built-in |
 
 **Network:** Stellar Testnet · RPC: `https://soroban-testnet.stellar.org` · Horizon: `https://horizon-testnet.stellar.org`
 
@@ -407,26 +411,50 @@ Shadow-Stellar/
 │       ├── zk/                     # Zero-knowledge module
 │       │   ├── mod.rs              # ZK module root + re-exports
 │       │   ├── field.rs            # Fp arithmetic over Ed25519 scalar field
-│       │   ├── pedersen.rs         # SHA-256 hash-based Pedersen commitments + nullifiers
+│   │   ├── pedersen.rs         # BN254 Pedersen commitments (g1_msm) + SHA-256 nullifiers
 │       │   ├── proof.rs            # ZkDepositProof, ZkEarlyExitProof, ZkMembershipProof structs
 │       │   └── verifier.rs         # On-chain proof verification functions
-│       ├── tests.rs                # 41 unit tests (36 CCP + 5 ZK field)
+│   ├── tests.rs                # 50 unit tests (40 CCP + 10 ZK field)
 │       └── integration_tests.rs
 ├── zk-commitment-protocol/         # Standalone ZK vault contract (Rust/Soroban)
 │   ├── Cargo.toml
 │   └── src/
 │       ├── lib.rs                  # initialize, zk_deposit, zk_withdraw, verify_range_proof, queries
-│       ├── zk_types.rs             # ZkVaultEntry, ZkDepositProof, ZkWithdrawProof, ZkError
-│       ├── zk_crypto.rs            # SHA-256 domain-separated commitment, nullifier, range-tag
-│       ├── storage.rs              # Entry registry, nullifier registry, depositor index
-│       ├── verifier.rs             # verify_deposit, verify_withdraw, verify_range
-│       └── tests.rs                # 15 unit tests
+│       ├── zk_types.rs             # ZkVaultEntry, ZkDepositProof, ZkWithdrawProof, ZkError, UltraHonkDepositProof
+│   ├── zk_crypto.rs            # BN254 Pedersen commitment (g1_msm) + SHA-256 nullifier/range-tag
+│       ├── storage.rs              # Entry registry, nullifier registry, depositor index, verifier address
+│   ├── verifier.rs             # verify_deposit, verify_withdraw, verify_range, verify_ultrahonk (embedded)
+│   └── tests.rs                # 23 unit tests
+├── crates/
+│   └── ultrahonk-soroban-verifier/ # Vendored UltraHONK verifier crate (from rs-soroban-ultrahonk)
+│       ├── Cargo.toml
+│       └── src/
+│           ├── lib.rs              # Crate root, trace! macro
+│           ├── field.rs            # BN254 Fr arithmetic via host functions
+│           ├── ec.rs               # G1 MSM, BN254 pairing check
+│           ├── hash.rs             # Keccak256 Fiat-Shamir transcript
+│           ├── types.rs            # Wire, G1Point, VerificationKey, Proof, Transcript
+│           ├── transcript.rs       # 9-round Fiat-Shamir challenge generation
+│           ├── relations.rs        # 26 subrelations across 8 families
+│           ├── sumcheck.rs         # Barycentric sumcheck verifier (28 rounds)
+│           ├── shplemini.rs        # Gemini + Shplonk + KZG batch-opening
+│           ├── verifier.rs         # UltraHonkVerifier orchestration
+│           ├── utils.rs            # Proof/VK deserialization (fixed-size layout)
+│           └── debug.rs            # Trace logging utilities
+├── circuits/                       # Noir zero-knowledge circuits
+│   └── private_vault/             # Poseidon2-based commitment proof circuit
+│       ├── Nargo.toml
+│       └── src/main.nr             # Proves: commitment == poseidon2(secret, recipient, amount)
+├── scripts/                        # Build and deploy utilities
+│   ├── build_noir.sh              # Compile Noir circuits, generate proofs + VK
+│   └── deploy-testnet.sh          # Deploy CCP + ZCP to testnet
 ├── Shadow-Stellar-app/             # React 19 frontend (Vite + TanStack Router)
 │   └── src/
 │       ├── lib/
 │       │   ├── contract.ts         # TLV Soroban client
 │       │   ├── ccp-contract.ts     # CCP + ZK Soroban client
-│       │   ├── zk-contract.ts      # ZCP client + off-chain prover (Web Crypto SHA-256)
+│   │   ├── stellar-bn254.ts    # Stellar BN254 curve (weierstrass) + Pedersen helpers
+│   │   ├── zk-contract.ts      # ZCP client + off-chain prover (BN254 Pedersen)
 │       │   ├── stellar-helper.ts   # Stellar Wallets Kit integration
 │       │   ├── assets.ts           # Asset registry (XLM, USDC, EURC)
 │       │   └── format.ts           # Date/time formatting incl. UTC/GMT/WAT
@@ -543,7 +571,7 @@ If funding fails: once the deadline passes, anyone calls `cancel`. The vault can
 
 | Function | Description |
 |---|---|
-| `initialize(xlm, usdc, eurc)` | One-time setup |
+| `initialize(xlm, usdc, eurc, verifier?)` | One-time setup (optional UltraHonk verifier address) |
 | `create_group_vault(creator, token, members, amounts, unlock_time, funding_deadline, lock_type, penalty_rate)` | Create vault → `vault_id` |
 | `deposit(caller, vault_id)` | Member deposits exact obligation |
 | `withdraw(caller, vault_id)` | Refund / mature withdrawal / early exit |
@@ -556,7 +584,7 @@ If funding fails: once the deadline passes, anyone calls `cancel`. The vault can
 | `get_pool_balance(vault_id)` | Read community pool balance |
 | `get_member_claim_amount(vault_id, member)` | Preview pool share |
 
-**ZK Privacy Functions:** `create_group_vault_zk` · `deposit_zk` · `withdraw_zk` · `claim_pool_zk` · `is_nullifier_spent` · `get_zk_vault` · `get_zk_member_record_fn` · `get_vault_privacy_mode`
+**ZK Privacy Functions:** `create_group_vault_zk` · `deposit_zk` · `withdraw_zk` · `claim_pool_zk` · `deposit_zk_ultrahonk` · `is_nullifier_spent` · `get_zk_vault` · `get_zk_member_record_fn` · `get_vault_privacy_mode`
 
 ### Events
 
@@ -608,14 +636,32 @@ If funding fails: once the deadline passes, anyone calls `cancel`. The vault can
 
 ### ZK Privacy Flow
 
-1. Browser generates a random 32-byte blinding factor (`crypto.getRandomValues`)
-2. `commitment = SHA-256(DOMAIN_COMMIT || amount_le || blinding_r)` — computed off-chain
-3. `nullifier = SHA-256(DOMAIN_NULLIFIER || entry_id_le || blinding_r)` — anti-replay token
-4. `range_tag = SHA-256(DOMAIN_RANGE || commitment || amount || 1 || amount)` — range proof
-5. Proof is submitted to `zk_deposit` — only the commitment hash is stored on-chain
-6. To withdraw: present `blinding_r` → contract verifies `SHA-256(amount || r) == commitment`
+#### Proof Modes
 
-The blinding factor is stored in the browser's localStorage. **Users should export and back it up from the ZK vault detail page.**
+The app offers two proof modes for both ZK vaults (ZCP) and ZK group vaults (CCP ZK):
+
+**SHA-256 (auto) — default, no external tools needed:**
+1. A blinding factor is derived deterministically from your wallet address using SHA-256 (no random value to lose)
+2. `commitment = amount·G + blinding·H` — BN254 Pedersen (compressed to 32-byte x-coordinate), computed in-browser via `@noble/curves`
+3. `nullifier = SHA-256(DOMAIN_NULLIFIER || entry_id_le || commitment)` — anti-replay token
+4. `range_tag = SHA-256(DOMAIN_RANGE || commitment || amount || 1 || amount)` — range proof
+5. Proof is submitted to `zk_deposit` / `deposit_zk` — only the commitment x-coordinate is stored on-chain
+6. To withdraw: the blinding factor is recomputed from your address, the contract recomputes `commitment' = amount·G + blinding·H`, and verifies equality
+
+For group ZK vaults, the member secret is provided by the vault creator — paste it on the vault detail page to unlock your membership, then deposit with one click (SHA-256 auto mode).
+
+**UltraHONK SNARK — advanced, requires an external prover:**
+1. You run a Noir circuit with your private inputs (amount, blinding, etc.) using `nargo` + `bb` (Barretenberg) off-chain
+2. The prover outputs three hex values: **commitment** (64 hex chars), **proof bytes** (29,184 hex chars), and **public inputs**
+3. Paste these into the corresponding fields in the browser UI
+4. The contract verifies the UltraHonk zk-SNARK on-chain via the embedded verifier (sumcheck → Shplemini → BN254 pairing)
+5. No blinding factor is stored in localStorage — the proof itself authorizes the withdrawal
+
+See the [Real ZK Integration](#real-zk-integration-ultrahonk--noir) section below for proof generation setup and version compatibility notes.
+
+> **For most users:** Use SHA-256 (auto). UltraHonk is only needed if you want to generate proofs with your own Noir circuits or use a non-deterministic blinding factor.
+
+The blinding factor (SHA-256 mode) is stored in the browser's localStorage. **Users should export and back it up from the ZK vault detail page.**
 
 ### Wallet Connection
 
@@ -643,28 +689,37 @@ npm run build
 
 ## Building the Contracts
 
-Requires Rust with `wasm32-unknown-unknown`:
+Requires Rust with `wasm32v1-none` and Soroban SDK 26.1.0+:
 
 ```bash
-rustup target add wasm32-unknown-unknown
+rustup target add wasm32v1-none
 ```
+
+> **Note:** All contracts use `soroban-sdk = "26.1.0"` with `features = ["alloc"]` (required by `wasm32v1-none` target). The SDK upgrade from v22→v26 also enables native BN254 host functions for `g1_msm` Pedersen commitments.
 
 Build TLV:
 ```bash
 cargo build --manifest-path time-locked-vault/Cargo.toml \
-  --target wasm32-unknown-unknown --release
+  --target wasm32v1-none --release
 ```
 
 Build CCP + ZK:
 ```bash
 cargo build --manifest-path collective-commitment-protocol/Cargo.toml \
-  --target wasm32-unknown-unknown --release
+  --target wasm32v1-none --release
 ```
 
 Build ZK Commitment Protocol:
 ```bash
 cargo build --manifest-path zk-commitment-protocol/Cargo.toml \
-  --target wasm32-unknown-unknown --release
+  --target wasm32v1-none --release
+```
+
+> The UltraHonk verifier is **embedded** into both CCP and ZCP (as a path dependency `ultrahonk_soroban_verifier`). No separate `shadow-zk-verifier` deploy is needed.
+
+Compile Noir circuits (requires nargo + bb):
+```bash
+./scripts/build_noir.sh
 ```
 
 Run TLV tests (23):
@@ -672,12 +727,12 @@ Run TLV tests (23):
 cargo test --manifest-path time-locked-vault/Cargo.toml
 ```
 
-Run CCP tests (41):
+Run CCP tests (50):
 ```bash
 cargo test --manifest-path collective-commitment-protocol/Cargo.toml
 ```
 
-Run ZCP tests (15):
+Run ZCP tests (23):
 ```bash
 cargo test --manifest-path zk-commitment-protocol/Cargo.toml
 ```
@@ -688,19 +743,24 @@ cargo test --manifest-path zk-commitment-protocol/Cargo.toml
 
 Requires the [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli).
 
+### Quick Deploy (CCP + ZCP)
+
 ```bash
-# Fund deployer
-stellar keys generate deployer --network testnet
-stellar keys fund deployer --network testnet
+# Uses identity $STELLAR_IDENTITY (default: shadow-stellar-admin)
+# Deploys both CCP and ZCP, prints contract IDs
+bash scripts/deploy-testnet.sh
 ```
 
 ### Deploy Time-Locked Vault v2
 
 ```bash
-stellar contract optimize --wasm time-locked-vault/target/wasm32-unknown-unknown/release/time_locked_vault.wasm
+stellar keys generate deployer --network testnet
+stellar keys fund deployer --network testnet
+
+stellar contract optimize --wasm time-locked-vault/target/wasm32v1-none/release/time_locked_vault.wasm
 
 stellar contract deploy \
-  --wasm time-locked-vault/target/wasm32-unknown-unknown/release/time_locked_vault.optimized.wasm \
+  --wasm time-locked-vault/target/wasm32v1-none/release/time_locked_vault.optimized.wasm \
   --source deployer --network testnet
 # → CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H
 
@@ -713,41 +773,35 @@ stellar contract invoke --id CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7
   --eurc_token CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ
 ```
 
-### Deploy CCP + ZK v2
+### Initialize Deployed Contracts
 
 ```bash
-stellar contract optimize --wasm collective-commitment-protocol/target/wasm32-unknown-unknown/release/collective_commitment_protocol.wasm
+# CCP (v3, SDK 26)
+stellar contract invoke \
+  --id CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ \
+  --source deployer --network testnet -- \
+  initialize \
+  --xlm_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --usdc_token CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA \
+  --eurc_token CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ
 
-stellar contract deploy \
-  --wasm collective-commitment-protocol/target/wasm32-unknown-unknown/release/collective_commitment_protocol.optimized.wasm \
-  --source deployer --network testnet
-# → CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ
-
-stellar contract invoke --id CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ \
-  --source deployer --network testnet \
-  -- initialize \
+# ZCP (v3, SDK 26)
+stellar contract invoke \
+  --id CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI \
+  --source deployer --network testnet -- \
+  initialize \
+  --owner GBAWEM6LAMZQIW6JRQPLEIZBZTQHRCUYGTZNCYIWD2BXOF4DE4QYA7OM \
   --xlm_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
   --usdc_token CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA \
   --eurc_token CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ
 ```
 
-### Deploy ZK Commitment Protocol
+### Frontend
 
 ```bash
-stellar contract optimize --wasm zk-commitment-protocol/target/wasm32-unknown-unknown/release/zk_commitment_protocol.wasm
-
-stellar contract deploy \
-  --wasm zk-commitment-protocol/target/wasm32-unknown-unknown/release/zk_commitment_protocol.optimized.wasm \
-  --source deployer --network testnet
-# → CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525
-
-stellar contract invoke --id CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525 \
-  --source deployer --network testnet \
-  -- initialize \
-  --owner GBAWEM6LAMZQIW6JRQPLEIZBZTQHRCUYGTZNCYIWD2BXOF4DE4QYA7OM \
-  --xlm_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
-  --usdc_token CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA \
-  --eurc_token CCUUDM434BMZMYWYDITHFXHDMIVTGGD6T2I5UKNX5BSLXLW7HVR4MCGZ
+cp scripts/.deployed-ids.env Shadow-Stellar-app/.env
+cd Shadow-Stellar-app && npm install && npm run dev
+```
 ```
 
 ---
@@ -755,11 +809,11 @@ stellar contract invoke --id CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIK
 ## Testnet Deployment Info
 
 | Item | Value |
-|---|---|
+|---|---|---|
 | Network | Stellar Testnet |
-| **TLV v2** | `CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H` |
-| **CCP + ZK v2** | `CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ` |
-| **ZK Commitment Protocol** | `CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525` |
+| **TLV v2** (unchanged) | `CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H` |
+| **CCP + ZK v3** (SDK 26) | `CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ` |
+| **ZK Commitment Protocol** (SDK 26) | `CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI` |
 | Protocol Owner | `GBAWEM6LAMZQIW6JRQPLEIZBZTQHRCUYGTZNCYIWD2BXOF4DE4QYA7OM` |
 | XLM SAC | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | USDC SAC | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` |
@@ -767,9 +821,113 @@ stellar contract invoke --id CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIK
 | RPC URL | `https://soroban-testnet.stellar.org` |
 | Horizon URL | `https://horizon-testnet.stellar.org` |
 | TLV v2 Explorer | https://stellar.expert/explorer/testnet/contract/CABGIDBEGTWZQLGVSZRLGR44PN3Q32QKV5PVD6BZLH4KGBLJDL7ZEZ3H |
-| CCP + ZK Explorer | https://stellar.expert/explorer/testnet/contract/CAL3RFT65X7GPLVTWSHYL3ODN6VPLE3M4BDZ5R7LABENLIGHSZQTYFIJ |
-| ZCP Explorer | https://stellar.expert/explorer/testnet/contract/CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525 |
+| CCP + ZK v3 Explorer | https://stellar.expert/explorer/testnet/contract/CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ |
+| ZCP v3 Explorer | https://stellar.expert/explorer/testnet/contract/CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI |
 
+
+---
+
+## Real ZK Integration (UltraHONK + Noir)
+
+Shadow-Stellar uses **real zero-knowledge proofs** via UltraHONK (Barretenberg's Honk proving system) verified on Stellar's BN254 host functions. The UltraHonk verifier is **embedded** directly into CCP and ZCP — no separate verifier contract deploy needed.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│  collective-commitment-protocol /            │
+│  zk-commitment-protocol  (Soroban SDK 26)    │
+│                                              │
+│  zk_deposit_ultrahonk() / deposit_zk_ultrahonk()
+│  zk_withdraw_ultrahonk()                     │
+│                                              │
+│  ┌────────────────────────────────────────┐  │
+│  │  ultrahonk-soroban-verifier (vendored) │  │
+│  │                                        │  │
+│  │  1. Load VK from storage               │  │
+│  │  2. Fiat-Shamir transcript             │  │
+│  │     (9 rounds of challenges)           │  │
+│  │  3. Sumcheck (28 rounds)               │  │
+│  │  4. Shplemini batch-opening            │  │
+│  │     (65-commitment MSM)                │  │
+│  │  5. BN254 pairing check                │  │
+│  └────────────────────────────────────────┘  │
+│                                              │
+│  Stores VerificationKey (settable via        │
+│  set_verification_key admin function)        │
+│  Falls back to cross-contract mock verifier  │
+│  when no VK is stored.                       │
+└──────────────────────────────────────────────┘
+```
+
+### How It Works
+
+1. **Off-chain:** User runs a Noir circuit (e.g., `private_vault`) to generate a proof:
+   - Proves: `commitment == poseidon2(secret, recipient, amount) ∧ amount > 0`
+   - Public inputs: `commitment` (3 BN254 field elements)
+   - Private witnesses: `secret`, `recipient`, `amount`
+   
+2. **Proof generation** uses `nargo prove` + `bb` (Barretenberg binary) to produce the 14,592-byte UltraHONK proof
+
+3. **On-chain verification** (embedded):
+   - `zk_deposit_ultrahonk` receives the proof bytes + public inputs
+   - Calls `UltraHonkVerifier::new(env, &vk).verify(proof, public_inputs)` — same contract
+   - Verifier runs: VK load → transcript generation → sumcheck → Shplemini → pairing check
+   - Returns `true`/`false`
+
+### Proof Format
+
+| Section | Size | Description |
+|---------|------|-------------|
+| Pairing point object | 16 × 32 B | Public input commitments |
+| Wire commitments | 8 × 128 B | w1, w2, w3, lookup_read_counts, lookup_read_tags, w4, lookup_inverses, z_perm |
+| Sumcheck univariates | 28 × 8 × 32 B | Round polynomials (coefficients) |
+| Sumcheck evaluations | 40 × 32 B | Evaluations at all 40 entities |
+| Gemini fold commitments | 27 × 128 B | Folded polynomial commitments |
+| Gemini evaluations | 28 × 32 B | Fold evaluation points |
+| Shplonk + KZG | 2 × 128 B | Shplonk quotient + KZG quotient |
+| **Total** | **14,592 B** | `PROOF_BYTES` |
+
+### Verification Key Format
+
+| Section | Size | Description |
+|---------|------|-------------|
+| Header | 4 × 8 B | circuit_size, log_circuit_size, public_inputs_size, pub_inputs_offset |
+| Precomputed commitments | 27 × 64 B | Q selectors, sigmas, IDs, tables, Lagrange |
+| **Total** | **1,760 B** | Stored on-chain at deploy time |
+
+### Noir Circuits
+
+Located in `circuits/`:
+
+- **`private_vault`**: Proves commitment equality + non-zero amount using Pedersen hash
+
+### Prerequisites
+
+- Noir ≥0.31.0 (`nargo`)
+- Barretenberg ≥0.87.0 (`bb`)
+- Stellar localnet with Protocol 25/26 support (for BN254 host functions)
+
+### Proof Format Compatibility
+
+> **Known issue:** The Soroban `ultrahonk_soroban_verifier` crate expects a 14,592-byte proof format from `bb 0.87.0`, but the current `bb 3.0.0-nightly` produces 7,488-byte proofs. The ACIR format is also incompatible between versions (`bb 0.87.0` cannot read ACIR from `nargo 1.0.0-beta.18`). This is a toolchain version alignment gap — the verifier is embedded and ready; proof generation needs matching `bb` + `nargo` versions.
+
+| Artifact | bb 0.87.0 (expected) | bb 3.0.0-nightly (current) |
+|----------|----------------------|-----------------------------|
+| Proof size | 14,592 B | 7,488 B |
+| VK size | 1,760 B | 1,888 B |
+| ACIR input format | Legacy | Current |
+
+### Setting the Verification Key
+
+```bash
+# Admin sets the VK on the deployed contract (CCP example)
+stellar contract invoke \
+  --id CDJRALESLSOS7UUYXSQTPUUJQVGYZQ4PJIWFRYNSS4RO5QLWHITYK5IQ \
+  --source deployer --network testnet -- \
+  set_verification_key \
+  --vk <hex-encoded-verification-key-bytes>
+```
 
 ---
 

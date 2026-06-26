@@ -267,26 +267,35 @@ impl Fp {
 
 /// Compute the full 256-bit product of two 128-bit integers.
 /// Returns (lo128, hi128) where result = hi128 * 2^128 + lo128.
+///
+/// Decomposes each 128-bit operand into two 64-bit halves:
+///   a = a0 + a1*2^64,  b = b0 + b1*2^64
+/// Then a*b = a0*b0 + (a0*b1 + a1*b0)*2^64 + a1*b1*2^128
+/// Each product fits in 128 bits. The middle term may overflow 128 bits.
 fn wide_mul_u128(a: u128, b: u128) -> (u128, u128) {
-    let a_lo = a as u64 as u128;
-    let a_hi = (a >> 64) as u64 as u128;
-    let b_lo = b as u64 as u128;
-    let b_hi = (b >> 64) as u64 as u128;
+    let a0 = a as u64 as u128;
+    let a1 = (a >> 64) as u64 as u128;
+    let b0 = b as u64 as u128;
+    let b1 = (b >> 64) as u64 as u128;
 
-    let ll = a_lo * b_lo;
-    let lh = a_lo * b_hi;
-    let hl = a_hi * b_lo;
-    let hh = a_hi * b_hi;
+    let ll = a0 * b0;
+    let lh = a0 * b1;
+    let hl = a1 * b0;
+    let hh = a1 * b1;
 
-    let mid = lh + hl;
-    let (mid_lo, mid_overflow) = mid.overflowing_add(0); // carry from mid
-    let carry = if mid < lh { 1u128 } else { 0u128 }; // overflow in mid
+    // Middle term: lh + hl, may overflow 128 bits
+    let (mid_lo, carry_mid) = lh.overflowing_add(hl);
+    // carry_mid indicates overflow of 128-bit addition → bit 128 set
+    let carry = carry_mid as u128;
 
-    let lo = ll + (mid_lo << 64);
-    let carry_lo = if lo < ll { 1u128 } else { 0u128 };
+    // Low 128 bits of result: ll + (mid_lo << 64) — may overflow
+    let (lo, carry_lo) = ll.overflowing_add(mid_lo << 64);
 
-    let hi = hh + (mid >> 64) + (carry << 64) + carry_lo;
-    let _ = mid_overflow;
+    // High 128 bits: hh + (mid_lo >> 64) + carry + carry_lo
+    let (hi, _) = hh.overflowing_add(mid_lo >> 64);
+    let (hi, _) = hi.overflowing_add(carry);
+    let (hi, _) = hi.overflowing_add(carry_lo as u128);
+
     (lo, hi)
 }
 

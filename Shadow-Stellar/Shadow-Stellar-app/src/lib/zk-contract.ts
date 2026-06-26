@@ -1,21 +1,22 @@
 /**
  * Soroban contract client for the Shadow-Stellar ZK Commitment Protocol.
  *
- * Contract ID: CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525
+ * Contract ID: CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI
  * Network:     Stellar Testnet
  *
- * Implements SHA-256 hash-based Pedersen commitments:
- *   commitment = SHA-256(DOMAIN_COMMIT || amount_le || blinding_r)
- *   nullifier  = SHA-256(DOMAIN_NULLIFIER || entry_id_le || blinding_r)
+ * Implements BN254 Pedersen + SHA-256 commitments:
+ *   commitment = amount * G + blinding * H  (BN254 G1 x-coordinate, 32 bytes)
+ *   nullifier  = SHA-256(DOMAIN_NULLIFIER || entry_id_le || commitment)
  *   range_tag  = SHA-256(DOMAIN_RANGE || commitment || amount || min || max)
  *
- * Off-chain prover helper functions are included in this file so the
- * frontend can construct valid ZkDepositProof / ZkWithdrawProof objects
- * using only the Web Crypto API (SHA-256 is available in every browser).
+ * Off-chain prover helpers use @noble/curves for the BN254 G1 arithmetic
+ * and the Web Crypto API (SHA-256) for nullifiers and range tags.
  */
 
+import { pedersenCommit } from './stellar-bn254';
+
 export const ZK_CONTRACT_ID =
-  "CCFFMJCIIWTGE3VQT62VMNFUFQKI734Y4QBKFGKVEJ3QOVLLJIKJU525";
+  "CBIJMJ6SDKD2CPTFBKE4APC7ATFNGOX7XMOFCI47YFSRQNDFLBBDPLLI";
 
 export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 export const RPC_URL = "https://soroban-testnet.stellar.org";
@@ -33,7 +34,6 @@ export const fromStroops = (stroops: bigint): number => Number(stroops) / 10_000
 
 // ─── Domain tags (must match the Rust constants) ──────────────────────────────
 
-const DOMAIN_COMMIT    = new TextEncoder().encode("zk-stellar:v1:commit");
 const DOMAIN_NULLIFIER = new TextEncoder().encode("zk-stellar:v1:nullifier");
 const DOMAIN_RANGE     = new TextEncoder().encode("zk-stellar:v1:range");
 
@@ -74,7 +74,11 @@ export interface ZkDepositProofInput {
   range_tag:  string;
   nullifier:  string;
   amount:     bigint;  // stroops (i128)
-  blinding_r: string;  // hex-encoded 32 bytes — the secret, only used locally during build
+}
+
+export interface ZkDepositResult {
+  proof: ZkDepositProofInput;
+  blinding: string;    // kept locally, NOT submitted to contract
 }
 
 export interface ZkWithdrawProofInput {
@@ -90,6 +94,22 @@ export interface ZkEntryOnChain {
   withdrawn:  boolean;
 }
 
+// ─── UltraHonk proof types ─────────────────────────────────────────────────────
+
+export interface UltraHonkDepositProofInput {
+  commitment:   string;  // hex 32 bytes
+  proof_bytes:  string;  // hex — 14,592 byte proof
+  public_inputs: string; // hex — serialized public inputs
+  amount:       bigint;
+}
+
+export interface UltraHonkWithdrawProofInput {
+  proof_bytes:   string;
+  public_inputs: string;
+  amount:        bigint;
+  nullifier:     string; // hex 32 bytes
+}
+
 // ─── Off-chain prover ─────────────────────────────────────────────────────────
 
 /**
@@ -103,33 +123,51 @@ export function generateBlinding(): string {
 }
 
 /**
- * Compute a Pedersen-style commitment to an amount.
- *   C = SHA-256(DOMAIN_COMMIT || amount_le_16bytes || blinding_r_32bytes)
+ * Deterministically derive a blinding factor from wallet address and entry_id.
+ * This prevents permanent fund loss on localStorage clear — the blinding factor
+ * can always be re-derived from the wallet.
+ *
+ * Call getNextEntryId() to get the entry_id BEFORE the deposit, then pass it here.
+ *
+ *   blinding = SHA-256("zk-stellar:v1:derived-blinding" || address || entry_id)
+ */
+export async function deriveBlindingFactor(address: string, entryId: bigint): Promise<string> {
+  const domain = new TextEncoder().encode("zk-stellar:v1:derived-blinding");
+  const addrBytes = new TextEncoder().encode(address.toLowerCase());
+  const idBytes = u64ToLeBytes(entryId);
+  const hash = await sha256(domain, addrBytes, idBytes);
+  return toHex(hash);
+}
+
+/**
+ * Compute a BN254 Pedersen commitment to an amount.
+ *   C = amount * G + blinding * H  (compressed to 32-byte x-coordinate)
+ *   G = BN254 generator (1, 2),  H = NUMS point (2, sqrt(11) mod p)
  */
 export async function computeCommitment(
   amountStroops: bigint,
   blindingHex: string,
 ): Promise<string> {
-  const amountBytes  = i128ToLeBytes(amountStroops);
-  const blindingBytes = hexToBytes(blindingHex);
-  const hash = await sha256(DOMAIN_COMMIT, amountBytes, blindingBytes);
-  return toHex(hash);
+  return pedersenCommit(amountStroops, blindingHex);
 }
 
 /**
  * Compute a vault-scoped nullifier.
- *   N = SHA-256(DOMAIN_NULLIFIER || entry_id_le_8bytes || blinding_r_32bytes)
+ *   N = SHA-256(DOMAIN_NULLIFIER || entry_id_le_8bytes || commitment_32bytes)
+ *
+ * Derived from the commitment (not blinding_r) so the contract can verify
+ * it without the blinding factor being revealed at deposit time.
  *
  * `entryId` is the on-chain entry counter value BEFORE this deposit.
  * Use getNextEntryId() to fetch it.
  */
 export async function computeNullifier(
   entryId: bigint,
-  blindingHex: string,
+  commitmentHex: string,
 ): Promise<string> {
   const idBytes       = u64ToLeBytes(entryId);
-  const blindingBytes = hexToBytes(blindingHex);
-  const hash = await sha256(DOMAIN_NULLIFIER, idBytes, blindingBytes);
+  const commitBytes   = hexToBytes(commitmentHex);
+  const hash = await sha256(DOMAIN_NULLIFIER, idBytes, commitBytes);
   return toHex(hash);
 }
 
@@ -157,15 +195,18 @@ export async function computeRangeTag(
 /**
  * Build a complete ZkDepositProof for the given amount and entry_id.
  * Call getNextEntryId() first to get the correct entry_id.
+ *
+ * The blinding factor is kept locally and NOT submitted to the contract.
+ * It is needed later for withdrawal (ZkWithdrawProof).
  */
 export async function buildDepositProof(
   amountStroops: bigint,
   entryId:       bigint,
   blindingHex?:  string,
-): Promise<{ proof: ZkDepositProofInput; blinding: string }> {
+): Promise<ZkDepositResult> {
   const blinding   = blindingHex ?? generateBlinding();
   const commitment = await computeCommitment(amountStroops, blinding);
-  const nullifier  = await computeNullifier(entryId, blinding);
+  const nullifier  = await computeNullifier(entryId, commitment);
   const rangeTag   = await computeRangeTag(commitment, amountStroops, 1n, amountStroops);
 
   return {
@@ -175,7 +216,6 @@ export async function buildDepositProof(
       range_tag: rangeTag,
       nullifier,
       amount:    amountStroops,
-      blinding_r: blinding,
     },
   };
 }
@@ -231,14 +271,13 @@ const bytes32Arg = (hex: string) => async () => {
   return xdr.ScVal.scvBytes(hexToBytes(hex));
 };
 
-/** Build a ZkDepositProof struct ScVal — keys MUST be sorted lexicographically */
+/** Build a ZkDepositProof struct ScVal — keys sorted lexicographically */
 const depositProofArg = (proof: ZkDepositProofInput) => async () => {
   const { xdr, nativeToScVal } = await loadSdk();
   const bytes32 = (hex: string) => xdr.ScVal.scvBytes(hexToBytes(hex));
-  // Sorted order: amount, blinding_r, commitment, nullifier, range_tag
+  // Sorted order: amount, commitment, nullifier, range_tag
   return xdr.ScVal.scvMap([
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("amount"),     val: nativeToScVal(proof.amount, { type: "i128" }) }),
-    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("blinding_r"), val: bytes32(proof.blinding_r)  }),
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("commitment"), val: bytes32(proof.commitment)  }),
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("nullifier"),  val: bytes32(proof.nullifier)   }),
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("range_tag"),  val: bytes32(proof.range_tag)   }),
@@ -254,6 +293,32 @@ const withdrawProofArg = (proof: ZkWithdrawProofInput) => async () => {
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("amount"),     val: nativeToScVal(proof.amount, { type: "i128" }) }),
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("blinding_r"), val: bytes32(proof.blinding_r) }),
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("nullifier"),  val: bytes32(proof.nullifier)  }),
+  ]);
+};
+
+/** Build an UltraHonkDepositProof struct ScVal — keys sorted lexicographically */
+const ultraHonkDepositProofArg = (proof: UltraHonkDepositProofInput) => async () => {
+  const { xdr, nativeToScVal } = await loadSdk();
+  const b32 = (hex: string) => xdr.ScVal.scvBytes(hexToBytes(hex));
+  const bytes = (hex: string) => xdr.ScVal.scvBytes(hexToBytes(hex));
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("amount"),        val: nativeToScVal(proof.amount, { type: "i128" }) }),
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("commitment"),    val: b32(proof.commitment) }),
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("proof_bytes"),   val: bytes(proof.proof_bytes) }),
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("public_inputs"), val: bytes(proof.public_inputs) }),
+  ]);
+};
+
+/** Build an UltraHonkWithdrawProof struct ScVal — keys sorted lexicographically */
+const ultraHonkWithdrawProofArg = (proof: UltraHonkWithdrawProofInput) => async () => {
+  const { xdr, nativeToScVal } = await loadSdk();
+  const b32 = (hex: string) => xdr.ScVal.scvBytes(hexToBytes(hex));
+  const bytes = (hex: string) => xdr.ScVal.scvBytes(hexToBytes(hex));
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("amount"),        val: nativeToScVal(proof.amount, { type: "i128" }) }),
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("nullifier"),     val: b32(proof.nullifier) }),
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("proof_bytes"),   val: bytes(proof.proof_bytes) }),
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("public_inputs"), val: bytes(proof.public_inputs) }),
   ]);
 };
 
@@ -360,6 +425,44 @@ export async function buildZkWithdraw(
 }
 
 /**
+ * Build a zk_deposit_ultrahonk transaction XDR.
+ * Uses an UltraHonk zk-SNARK proof verified cross-contract.
+ */
+export async function buildZkDepositUltraHonk(
+  caller: string,
+  token: string,
+  proof: UltraHonkDepositProofInput,
+): Promise<string> {
+  const tokenAddr = TOKEN_ADDRESS[token];
+  if (!tokenAddr) throw new Error(`Unsupported token: ${token}`);
+  return buildTx(caller, "zk_deposit_ultrahonk", [
+    addrArg(caller),
+    addrArg(tokenAddr),
+    ultraHonkDepositProofArg(proof),
+  ]);
+}
+
+/**
+ * Build a zk_withdraw_ultrahonk transaction XDR.
+ */
+export async function buildZkWithdrawUltraHonk(
+  caller: string,
+  entryId: bigint,
+  token: string,
+  proof: UltraHonkWithdrawProofInput,
+): Promise<string> {
+  const tokenAddr = TOKEN_ADDRESS[token];
+  if (!tokenAddr) throw new Error(`Unsupported token: ${token}`);
+  return buildTx(caller, "zk_withdraw_ultrahonk", [
+    addrArg(caller),
+    u64Arg(entryId),
+    addrArg(tokenAddr),
+    ultraHonkWithdrawProofArg(proof),
+  ]);
+}
+
+/**
+ * Get a ZK vault entry by entry_id.
  * Get a ZK vault entry by entry_id.
  */
 export async function getZkEntry(entryId: bigint): Promise<ZkEntryOnChain | null> {
