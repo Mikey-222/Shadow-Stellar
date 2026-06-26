@@ -178,9 +178,76 @@ React 19 + Vite + TanStack Router. Supports Freighter, xBull, Albedo, Rabet, Lob
 5. Withdrawal recomputes commitment from (amount, blinding)
 
 **UltraHONK SNARK — advanced:**
-1. Run Noir circuit with private inputs using `nargo` + `bb`
-2. Paste commitment hex, proof bytes, public inputs into UI
-3. Contract verifies zk-SNARK via embedded verifier
+
+Generate a proof off-chain, then paste the output hex into the UI.
+
+```bash
+# 1. Prerequisites
+curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+noirup -v 1.0.0-beta.2
+# Install bb v0.87.0 (matching the embedded verifier)
+curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/tags/aztec-packages-v0.87.0/barretenberg/bbup/install | bash
+bbup -v 0.87.0
+```
+
+```bash
+# 2. Navigate to the circuit
+cd circuits/private_vault
+```
+
+```bash
+# 3. Edit Prover.toml with your values
+#    commitment = pedersen([blinding, recipient, amount]) — hex
+#    nullifier  = pedersen([blinding, entry_id]) — hex
+#    blinding   = your 32-byte blinding factor — hex
+#    recipient  = hex-encoded wallet address (first 8 bytes)
+#    amount     = deposit amount in stroops (e.g. 500000000 = 50 XLM)
+#    entry_id   = next entry ID from get_next_entry_id()
+```
+
+```bash
+# 4. Compile, execute, prove
+nargo compile --silence-warnings
+nargo execute
+mkdir -p ../../build/private_vault
+bb write_vk --scheme ultra_honk \
+  --bytecode_path target/private_vault.json \
+  -o ../../build/private_vault
+bb prove --scheme ultra_honk --oracle_hash poseidon2 \
+  --bytecode_path target/private_vault.json \
+  --witness_path target/private_vault.gz \
+  -k ../../build/private_vault/vk \
+  -o ../../build/private_vault/proof
+bb verify --scheme ultra_honk --oracle_hash poseidon2 \
+  -k ../../build/private_vault/vk \
+  -p ../../build/private_vault/proof/proof \
+  -i ../../build/private_vault/proof/public_inputs
+```
+
+```bash
+# 5. Extract hex values to paste into the UI
+#    Proof bytes (raw binary → hex):
+xxd -p ../../build/private_vault/proof/proof | tr -d '\n'; echo
+#    Public inputs (raw binary → hex):
+xxd -p ../../build/private_vault/proof/public_inputs | tr -d '\n'; echo
+#    Commitment (from Prover.toml or compute via stellar-bn254):
+#    Copy the commitment hex from Prover.toml directly
+```
+
+```bash
+# 6. Paste into the UI fields:
+#    - Commitment: 64-char hex (from Prover.toml or stellar-bn254)
+#    - Proof bytes: the raw proof hex (29184 chars for bb 0.87.0)
+#    - Public inputs: the public inputs hex
+```
+
+Or use the build script (automates steps 4–5):
+```bash
+bash scripts/build_noir.sh
+# Output: build/private_vault/proof/{proof, public_inputs, vk}
+```
+
+> **Proof format note:** The embedded verifier expects 14,592-byte proofs from `bb 0.87.0`. Newer `bb` versions produce 7,488-byte proofs and are incompatible. See [Known Issue](#known-issue) below.
 
 ---
 
